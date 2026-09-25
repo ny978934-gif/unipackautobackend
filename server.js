@@ -18,6 +18,8 @@ const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 5000);
 
+const normalizeOrigin = (value) => value.trim().replace(/\/+$/, '');
+
 // Dynamic CORS to allow localhost, 127.0.0.1 on any port during development
 app.use(
   cors({
@@ -25,6 +27,7 @@ app.use(
       // allow requests with no origin (like mobile apps, curl, or Postman)
       if (!origin) return callback(null, true);
 
+      const normalizedOrigin = normalizeOrigin(origin);
       const allowedPatterns = [
         /^https?:\/\/localhost(:\d+)?$/,
         /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
@@ -32,12 +35,12 @@ app.use(
 
       const envOrigins = (process.env.CLIENT_ORIGIN || '')
         .split(',')
-        .map((o) => o.trim())
+        .map((o) => normalizeOrigin(o))
         .filter(Boolean);
 
       if (
-        allowedPatterns.some((pattern) => pattern.test(origin)) ||
-        envOrigins.includes(origin)
+        allowedPatterns.some((pattern) => pattern.test(normalizedOrigin)) ||
+        envOrigins.includes(normalizedOrigin)
       ) {
         callback(null, true);
       } else {
