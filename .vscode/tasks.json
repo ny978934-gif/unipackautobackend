@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Check server syntax",
+			"type": "shell",
+			"command": "node --check server.js && node --check middleware/cloudinaryUpload.js && node --check controllers/productController.js && node --check controllers/categoryController.js && node --check controllers/subCategoryController.js",
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}
