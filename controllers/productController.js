@@ -20,6 +20,19 @@ const parseSpecifications = (value) => {
   }
 };
 
+const parseImages = (value) => {
+  if (Array.isArray(value)) return value.filter((url) => typeof url === "string" && url.trim());
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((url) => typeof url === "string" && url.trim())
+      : [value];
+  } catch {
+    return [value];
+  }
+};
+
 // CREATE PRODUCT
 export const createProduct = async (req, res) => {
   try {
@@ -40,6 +53,13 @@ export const createProduct = async (req, res) => {
       compatibleMachines = [],
       inStock = true,
     } = req.body;
+    const productImages = req.uploadedImageUrls?.length
+      ? req.uploadedImageUrls
+      : parseImages(images).length
+      ? parseImages(images)
+      : image
+      ? [image]
+      : [];
 
     if (!name?.trim()) {
       return res.status(400).json({
@@ -91,14 +111,8 @@ export const createProduct = async (req, res) => {
       slug: slugify(slug || name),
       partCode,
       price: Number(price) || 0,
-      image: req.uploadedImageUrl || image || (Array.isArray(images) ? images[0] : "") || "",
-      images: req.uploadedImageUrl
-        ? [req.uploadedImageUrl]
-        : Array.isArray(images) && images.length
-        ? images
-        : image
-        ? [image]
-        : [],
+      image: productImages[0] || "",
+      images: productImages,
       description,
       specifications: parseSpecifications(specifications),
       compatibleMachines: Array.isArray(compatibleMachines)
@@ -225,11 +239,19 @@ export const updateProduct = async (req, res) => {
     if (slug || name) updateData.slug = slugify(slug || name);
     if (partCode !== undefined) updateData.partCode = partCode;
     if (price !== undefined) updateData.price = Number(price);
-    if (req.uploadedImageUrl || image !== undefined) {
-      updateData.image = req.uploadedImageUrl || image;
-      if (req.uploadedImageUrl) updateData.images = [req.uploadedImageUrl];
+    if (req.uploadedImageUrls?.length) {
+      updateData.image = req.uploadedImageUrls[0];
+      updateData.images = req.uploadedImageUrls;
+    } else if (image !== undefined) {
+      updateData.image = image;
+      if (images === undefined) updateData.images = image ? [image] : [];
     }
-    if (images !== undefined) updateData.images = images;
+    if (images !== undefined) {
+      updateData.images = parseImages(images);
+      if (image === undefined && updateData.images.length) {
+        updateData.image = updateData.images[0];
+      }
+    }
     if (description !== undefined) updateData.description = description;
     if (specifications !== undefined) {
       updateData.specifications = parseSpecifications(specifications);
