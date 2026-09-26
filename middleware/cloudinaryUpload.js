@@ -27,8 +27,7 @@ const uploadToCloudinary = (file) =>
   new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
-        folder: "unipackauto/spare-parts",
-        public_id: randomUUID(),
+        public_id: `unipackauto/spare-parts/${randomUUID()}`,
         resource_type: "image",
       },
       (error, result) => {
