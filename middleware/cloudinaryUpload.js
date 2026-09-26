@@ -3,6 +3,7 @@ import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import cloudinary, { isConfigured } from "../config/cloudinary.js";
+import { uploadsDirectory } from "../config/uploads.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -16,10 +17,9 @@ const upload = multer({
 const saveLocally = async (req, file) => {
   const extension = (file.mimetype.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "");
   const filename = `${randomUUID()}.${extension}`;
-  const uploadDirectory = path.resolve("uploads");
 
-  await fs.mkdir(uploadDirectory, { recursive: true });
-  await fs.writeFile(path.join(uploadDirectory, filename), file.buffer);
+  await fs.mkdir(uploadsDirectory, { recursive: true });
+  await fs.writeFile(path.join(uploadsDirectory, filename), file.buffer);
   return `${req.protocol}://${req.get("host")}/uploads/${filename}`;
 };
 

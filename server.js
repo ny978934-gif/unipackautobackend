@@ -13,6 +13,7 @@ import Category from './models/Category.js';
 import SubCategory from './models/SubCategory.js';
 import Product from './models/Product.js';
 import { seedDatabase } from './seed.js';
+import { uploadsDirectory } from './config/uploads.js';
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,7 +94,7 @@ app.use(
 );
 
 app.use(express.json({ limit: '10mb' }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(uploadsDirectory));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', database: 'configured' });
