@@ -24,6 +24,43 @@ if (process.env.NODE_ENV === 'production') {
 
 const normalizeOrigin = (value) => value.trim().replace(/\/+$/, '');
 
+const normalizeLegacyImageUrls = (value, fieldName = '') => {
+  if (typeof value === 'string' && ['image', 'images'].includes(fieldName)) {
+    return value.replace(
+      /^http:\/\/(unipackautobackend\.onrender\.com\/uploads\/)/i,
+      'https://$1'
+    );
+  }
+
+  if (value && typeof value.toJSON === 'function') {
+    return normalizeLegacyImageUrls(value.toJSON(), fieldName);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeLegacyImageUrls(item, fieldName));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        normalizeLegacyImageUrls(item, key),
+      ])
+    );
+  }
+
+  return value;
+};
+
+app.use((req, res, next) => {
+  const sendJson = res.json;
+  res.json = function (body) {
+    const jsonBody = body?.toJSON ? body.toJSON() : body;
+    return sendJson.call(this, normalizeLegacyImageUrls(jsonBody));
+  };
+  next();
+});
+
 // Dynamic CORS to allow localhost, 127.0.0.1 on any port during development
 app.use(
   cors({
