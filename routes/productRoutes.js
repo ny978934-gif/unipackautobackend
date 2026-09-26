@@ -6,14 +6,14 @@ import {
   updateProduct,
   deleteProduct,
 } from "../controllers/productController.js";
-import { uploadProductImages } from "../middleware/cloudinaryUpload.js";
+import { uploadMultipleImages } from "../middleware/cloudinaryUpload.js";
 
 const router = express.Router();
 
 router.get("/", getProducts);
-router.post("/", uploadProductImages, createProduct);
+router.post("/", uploadMultipleImages, createProduct);
 router.get("/:productSlug", getProductBySlug);
-router.put("/:id", uploadProductImages, updateProduct);
+router.put("/:id", uploadMultipleImages, updateProduct);
 router.delete("/:id", deleteProduct);
 
 export default router;

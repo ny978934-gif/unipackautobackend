@@ -35,6 +35,7 @@ export const createSubCategory = async (req, res) => {
       slug: slugify(slug || name),
       description,
       image: req.uploadedImageUrl || image,
+      images: req.uploadedImageUrls?.length ? req.uploadedImageUrls : image ? [image] : [],
       imageName,
     });
 

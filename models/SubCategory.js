@@ -30,6 +30,12 @@ const subCategorySchema = new mongoose.Schema(
       default: "",
     },
 
+    images: [
+      {
+        type: String,
+      },
+    ],
+
     imageName: {
       type: String,
       default: "",

@@ -88,7 +88,8 @@ export const createSubSubCategory = async (req, res) => {
       subCategory: subCategory._id,
       name: name.trim(),
       slug: slugify(slug || name),
-      image: req.uploadedImageUrl || image,
+      image: req.uploadedImageUrls?.[0] || req.uploadedImageUrl || image,
+      images: req.uploadedImageUrls?.length ? req.uploadedImageUrls : image ? [image] : [],
       imageName,
     });
     res.status(201).json(await item.populate(["category", "subCategory"]));

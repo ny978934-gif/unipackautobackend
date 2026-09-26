@@ -76,7 +76,7 @@ const uploadToCloudinary = (file) =>
     stream.end(file.buffer);
   });
 
-export const uploadProductImages = (req, res, next) => {
+export const uploadMultipleImages = (req, res, next) => {
   uploadProductImageFiles(req, res, async (error) => {
     if (error) return next(error);
     const files = [...(req.files?.images || []), ...(req.files?.image || [])];
