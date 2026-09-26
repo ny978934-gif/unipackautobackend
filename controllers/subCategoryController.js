@@ -155,8 +155,12 @@ export const updateSubCategory = async (req, res) => {
     if (name) updateData.name = name.trim();
     if (slug || name) updateData.slug = slugify(slug || name);
     if (description !== undefined) updateData.description = description;
-    if (req.uploadedImageUrl || image !== undefined) {
+    if (req.uploadedImageUrls?.length) {
+      updateData.image = req.uploadedImageUrls[0];
+      updateData.images = req.uploadedImageUrls;
+    } else if (req.uploadedImageUrl || image !== undefined) {
       updateData.image = req.uploadedImageUrl || image;
+      updateData.images = updateData.image ? [updateData.image] : [];
     }
     if (imageName !== undefined) updateData.imageName = imageName;
     if (categoryId) updateData.category = categoryId;

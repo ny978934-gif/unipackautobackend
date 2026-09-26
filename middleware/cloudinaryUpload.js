@@ -14,7 +14,15 @@ const upload = multer({
   },
 });
 
+const canSaveLocally = process.env.NODE_ENV !== "production" || Boolean(process.env.UPLOAD_DIR);
+
 const saveLocally = async (req, file) => {
+  if (!canSaveLocally) {
+    throw new Error(
+      "Local image storage is disabled in production. Configure Cloudinary or attach a persistent disk and set UPLOAD_DIR."
+    );
+  }
+
   const extension = (file.mimetype.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "");
   const filename = `${randomUUID()}.${extension}`;
 
@@ -47,6 +55,13 @@ export const uploadImage = (req, res, next) => {
     if (!req.file) return next();
 
     if (!isConfigured || !cloudinary) {
+      if (!canSaveLocally) {
+        return next(
+          new Error(
+            "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in the production server."
+          )
+        );
+      }
       return saveLocally(req, req.file)
         .then((url) => {
           req.uploadedImageUrl = url;
@@ -62,6 +77,13 @@ export const uploadImage = (req, res, next) => {
       })
       .catch((uploadError) => {
         if (uploadError.http_code === 401 || uploadError.http_code === 403) {
+          if (!canSaveLocally) {
+            return next(
+              new Error(
+                "Cloudinary rejected the upload. Check the production Cloudinary API credentials."
+              )
+            );
+          }
           return saveLocally(req, req.file)
             .then((url) => {
               req.uploadedImageUrl = url;
@@ -87,12 +109,22 @@ export const uploadMultipleImages = (req, res, next) => {
 
     try {
       if (!isConfigured || !cloudinary) {
+        if (!canSaveLocally) {
+          throw new Error(
+            "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in the production server."
+          );
+        }
         req.uploadedImageUrls = await Promise.all(files.map((file) => saveLocally(req, file)));
       } else {
         try {
           req.uploadedImageUrls = await Promise.all(files.map(uploadToCloudinary));
         } catch (uploadError) {
           if (uploadError.http_code !== 401 && uploadError.http_code !== 403) throw uploadError;
+          if (!canSaveLocally) {
+            throw new Error(
+              "Cloudinary rejected the upload. Check the production Cloudinary API credentials."
+            );
+          }
           req.uploadedImageUrls = await Promise.all(files.map((file) => saveLocally(req, file)));
         }
       }
