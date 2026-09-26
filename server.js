@@ -18,6 +18,10 @@ const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 5000);
 
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 const normalizeOrigin = (value) => value.trim().replace(/\/+$/, '');
 
 // Dynamic CORS to allow localhost, 127.0.0.1 on any port during development
