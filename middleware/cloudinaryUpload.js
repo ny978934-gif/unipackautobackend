@@ -23,6 +23,25 @@ const saveLocally = async (req, file) => {
   return `${req.protocol}://${req.get("host")}/uploads/${filename}`;
 };
 
+const uploadToCloudinary = (file) =>
+  new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "unipackauto/spare-parts",
+        public_id: randomUUID(),
+        resource_type: "image",
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        if (!result?.secure_url) {
+          return reject(new Error("Cloudinary upload succeeded without returning an image URL."));
+        }
+        resolve(result.secure_url);
+      }
+    );
+    stream.end(file.buffer);
+  });
+
 export const uploadImage = (req, res, next) => {
   upload.single("image")(req, res, (error) => {
     if (error) return next(error);
@@ -37,25 +56,22 @@ export const uploadImage = (req, res, next) => {
         .catch(next);
     }
 
-    const stream = cloudinary.uploader.upload_stream(
-      { folder: "unipackauto/spare-parts", resource_type: "image" },
-      (uploadError, result) => {
-        if (uploadError) {
-          if (uploadError.http_code === 401 || uploadError.http_code === 403) {
-            return saveLocally(req, req.file)
-              .then((url) => {
-                req.uploadedImageUrl = url;
-                next();
-              })
-              .catch(next);
-          }
-          return next(uploadError);
-        }
-        req.uploadedImageUrl = result.secure_url;
+    uploadToCloudinary(req.file)
+      .then((url) => {
+        req.uploadedImageUrl = url;
         next();
-      }
-    );
-    stream.end(req.file.buffer);
+      })
+      .catch((uploadError) => {
+        if (uploadError.http_code === 401 || uploadError.http_code === 403) {
+          return saveLocally(req, req.file)
+            .then((url) => {
+              req.uploadedImageUrl = url;
+              next();
+            })
+            .catch(next);
+        }
+        next(uploadError);
+      });
   });
 };
 
@@ -63,18 +79,6 @@ const uploadProductImageFiles = upload.fields([
   { name: "images", maxCount: 10 },
   { name: "image", maxCount: 1 },
 ]);
-
-const uploadToCloudinary = (file) =>
-  new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder: "unipackauto/spare-parts", resource_type: "image" },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve(result.secure_url);
-      }
-    );
-    stream.end(file.buffer);
-  });
 
 export const uploadMultipleImages = (req, res, next) => {
   uploadProductImageFiles(req, res, async (error) => {
