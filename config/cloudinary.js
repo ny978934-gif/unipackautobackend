@@ -11,7 +11,11 @@ const hasIndividualCredentials = configuredCredentials.every(
 );
 const cloudinaryUrl = process.env.CLOUDINARY_URL?.trim();
 
-if (hasIndividualCredentials) {
+if (cloudinaryUrl && !cloudinaryUrl.startsWith('cloudinary://')) {
+  throw new Error('CLOUDINARY_URL must start with cloudinary://.');
+}
+
+if (!cloudinaryUrl && hasIndividualCredentials) {
   cloudinary.config({
     cloud_name: configuredCredentials[0].trim(),
     api_key: configuredCredentials[1].trim(),
@@ -23,10 +27,6 @@ const cloudinaryConfig = cloudinary.config();
 const isConfigured = Boolean(
   cloudinaryConfig.cloud_name && cloudinaryConfig.api_key && cloudinaryConfig.api_secret
 );
-
-if (cloudinaryUrl && !cloudinaryUrl.startsWith('cloudinary://')) {
-  throw new Error('CLOUDINARY_URL must start with cloudinary://.');
-}
 
 export { isConfigured };
 export default isConfigured ? cloudinary : null;
