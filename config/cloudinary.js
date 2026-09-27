@@ -1,58 +1,49 @@
 import 'dotenv/config';
 import { v2 as cloudinary } from 'cloudinary';
 
-const configuredCredentials = [
-  process.env.CLOUDINARY_CLOUD_NAME,
-  process.env.CLOUDINARY_API_KEY,
-  process.env.CLOUDINARY_API_SECRET,
-];
-const hasIndividualCredentials = configuredCredentials.every(
-  (value) => value?.trim() && !/^your_(cloud_name|api_key|api_secret)$/i.test(value.trim())
-);
-const cloudinaryUrl = process.env.CLOUDINARY_URL?.trim();
+// Try individual credentials first (most reliable — no URL parsing quirks)
+const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
+const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
 
-if (cloudinaryUrl) {
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(cloudinaryUrl);
-  } catch {
-    throw new Error('CLOUDINARY_URL is invalid. Copy the API environment URL from Cloudinary.');
+const isPlaceholder = (v) => !v || /^your_(cloud_name|api_key|api_secret)$/i.test(v);
+
+const hasIndividualCredentials =
+  !isPlaceholder(cloudName) && !isPlaceholder(apiKey) && !isPlaceholder(apiSecret);
+
+if (hasIndividualCredentials) {
+  cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
+} else {
+  // Fall back to CLOUDINARY_URL — must be cloudinary://api_key:api_secret@cloud_name
+  const cloudinaryUrl = process.env.CLOUDINARY_URL?.trim();
+  if (cloudinaryUrl) {
+    // Use a dummy base so Node's URL parser can handle the custom protocol
+    const normalized = cloudinaryUrl.replace(/^cloudinary:\/\//, 'https://');
+    try {
+      const parsed = new URL(normalized);
+      const parsedKey = decodeURIComponent(parsed.username);
+      const parsedSecret = decodeURIComponent(parsed.password);
+      const parsedCloud = parsed.hostname;
+
+      if (parsedKey && parsedSecret && parsedCloud) {
+        cloudinary.config({
+          cloud_name: parsedCloud,
+          api_key: parsedKey,
+          api_secret: parsedSecret,
+        });
+      } else {
+        console.warn(
+          'CLOUDINARY_URL is incomplete — cloud name, API key, or API secret could not be parsed. ' +
+          'Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET instead.'
+        );
+      }
+    } catch {
+      console.warn(
+        'CLOUDINARY_URL could not be parsed. ' +
+        'Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET instead.'
+      );
+    }
   }
-
-  if (
-    parsedUrl.protocol !== 'cloudinary:' ||
-    !parsedUrl.hostname ||
-    !parsedUrl.username ||
-    !parsedUrl.password
-  ) {
-    throw new Error(
-      'CLOUDINARY_URL is incomplete. It must contain the Cloudinary API key, API secret, and cloud name.'
-    );
-  }
-
-  let apiKey;
-  let apiSecret;
-  try {
-    apiKey = decodeURIComponent(parsedUrl.username);
-    apiSecret = decodeURIComponent(parsedUrl.password);
-  } catch {
-    throw new Error('CLOUDINARY_URL contains invalid encoded credentials.');
-  }
-
-  cloudinary.config({
-    cloud_name: parsedUrl.hostname,
-    api_key: apiKey,
-    api_secret: apiSecret,
-    ...(parsedUrl.pathname && parsedUrl.pathname !== '/'
-      ? { secure_distribution: parsedUrl.pathname.slice(1) }
-      : {}),
-  });
-} else if (hasIndividualCredentials) {
-  cloudinary.config({
-    cloud_name: configuredCredentials[0].trim(),
-    api_key: configuredCredentials[1].trim(),
-    api_secret: configuredCredentials[2].trim(),
-  });
 }
 
 const cloudinaryConfig = cloudinary.config();
