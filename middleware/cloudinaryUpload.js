@@ -16,6 +16,25 @@ const upload = multer({
 
 const canSaveLocally = process.env.NODE_ENV !== "production" || Boolean(process.env.UPLOAD_DIR);
 
+const cloudinaryConfigurationError = () => {
+  const error = new Error(
+    "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in the production server."
+  );
+  error.status = 503;
+  return error;
+};
+
+const cloudinaryUploadError = (uploadError) => {
+  const isCredentialsError = uploadError.http_code === 401 || uploadError.http_code === 403;
+  const error = new Error(
+    isCredentialsError
+      ? "Cloudinary rejected the upload. Check the production Cloudinary credentials."
+      : `Cloudinary upload failed: ${uploadError.message || "Unknown Cloudinary error."}`
+  );
+  error.status = isCredentialsError ? 503 : 502;
+  return error;
+};
+
 const saveLocally = async (req, file) => {
   if (!canSaveLocally) {
     throw new Error(
@@ -56,11 +75,7 @@ export const uploadImage = (req, res, next) => {
 
     if (!isConfigured || !cloudinary) {
       if (!canSaveLocally) {
-        return next(
-          new Error(
-            "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in the production server."
-          )
-        );
+        return next(cloudinaryConfigurationError());
       }
       return saveLocally(req, req.file)
         .then((url) => {
@@ -78,11 +93,7 @@ export const uploadImage = (req, res, next) => {
       .catch((uploadError) => {
         if (uploadError.http_code === 401 || uploadError.http_code === 403) {
           if (!canSaveLocally) {
-            return next(
-              new Error(
-                "Cloudinary rejected the upload. Check the production Cloudinary API credentials."
-              )
-            );
+            return next(cloudinaryUploadError(uploadError));
           }
           return saveLocally(req, req.file)
             .then((url) => {
@@ -91,7 +102,7 @@ export const uploadImage = (req, res, next) => {
             })
             .catch(next);
         }
-        next(uploadError);
+        next(cloudinaryUploadError(uploadError));
       });
   });
 };
@@ -110,20 +121,18 @@ export const uploadMultipleImages = (req, res, next) => {
     try {
       if (!isConfigured || !cloudinary) {
         if (!canSaveLocally) {
-          throw new Error(
-            "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in the production server."
-          );
+          throw cloudinaryConfigurationError();
         }
         req.uploadedImageUrls = await Promise.all(files.map((file) => saveLocally(req, file)));
       } else {
         try {
           req.uploadedImageUrls = await Promise.all(files.map(uploadToCloudinary));
         } catch (uploadError) {
-          if (uploadError.http_code !== 401 && uploadError.http_code !== 403) throw uploadError;
+          if (uploadError.http_code !== 401 && uploadError.http_code !== 403) {
+            throw cloudinaryUploadError(uploadError);
+          }
           if (!canSaveLocally) {
-            throw new Error(
-              "Cloudinary rejected the upload. Check the production Cloudinary API credentials."
-            );
+            throw cloudinaryUploadError(uploadError);
           }
           req.uploadedImageUrls = await Promise.all(files.map((file) => saveLocally(req, file)));
         }

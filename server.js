@@ -139,8 +139,12 @@ if (process.env.NODE_ENV === 'production') {
 
 app.use((error, req, res, next) => {
   console.error(error);
-  res.status(error.status || 500).json({
-    message: error.message || 'Internal server error',
+  const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : error.status || 500;
+  res.status(status).json({
+    message:
+      error.code === 'LIMIT_FILE_SIZE'
+        ? 'Image file is too large. Maximum allowed size is 5 MB.'
+        : error.message || 'Internal server error',
   });
 });
 
