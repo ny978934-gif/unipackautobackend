@@ -133,6 +133,12 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 app.use((error, req, res, next) => {
+  if (error.providerStatus) {
+    console.error('Cloudinary API upload rejection:', {
+      status: error.providerStatus,
+      message: error.providerMessage,
+    });
+  }
   console.error(error);
   const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : error.status || 500;
   res.status(status).json({

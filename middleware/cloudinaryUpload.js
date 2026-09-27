@@ -26,12 +26,25 @@ const cloudinaryConfigurationError = () => {
 
 const cloudinaryUploadError = (uploadError) => {
   const isCredentialsError = uploadError.http_code === 401 || uploadError.http_code === 403;
+  const providerMessage =
+    uploadError.error?.message ||
+    uploadError.message ||
+    "Cloudinary did not provide an error message.";
+  const safeProviderMessage = [
+    process.env.CLOUDINARY_API_SECRET,
+    process.env.CLOUDINARY_URL,
+  ]
+    .filter(Boolean)
+    .reduce((message, sensitiveValue) => message.split(sensitiveValue).join("[redacted]"), providerMessage);
   const error = new Error(
-    isCredentialsError
-      ? "Cloudinary rejected the upload. Check the production Cloudinary credentials."
-      : `Cloudinary upload failed: ${uploadError.message || "Unknown Cloudinary error."}`
+    uploadError.http_code === 401
+      ? `Cloudinary authentication failed (401): ${safeProviderMessage} Check that the API key, API secret, and cloud name in Render all belong to the same Cloudinary account.`
+      : uploadError.http_code === 403
+        ? `Cloudinary denied the upload (403): ${safeProviderMessage} Check the Cloudinary account and upload permissions.`
+        : `Cloudinary upload failed${uploadError.http_code ? ` (HTTP ${uploadError.http_code})` : ""}: ${safeProviderMessage}`
   );
-  error.cause = uploadError;
+  error.providerStatus = uploadError.http_code;
+  error.providerMessage = safeProviderMessage;
   error.status = isCredentialsError ? 503 : 502;
   return error;
 };
