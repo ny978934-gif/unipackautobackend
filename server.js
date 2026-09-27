@@ -25,6 +25,32 @@ if (process.env.NODE_ENV === 'production') {
 
 const normalizeOrigin = (value) => value.trim().replace(/\/+$/, '');
 
+const envOrigins = (process.env.CLIENT_ORIGIN || '')
+  .split(',')
+  .map(normalizeOrigin)
+  .filter(Boolean);
+const allowedOriginPatterns = [
+  /^https?:\/\/localhost(:\d+)?$/,
+  /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+  /^https:\/\/unipackauto(?:-[a-z0-9-]+)?\.vercel\.app$/i,
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+
+    const normalizedOrigin = normalizeOrigin(origin);
+    const isAllowed =
+      envOrigins.includes(normalizedOrigin) ||
+      allowedOriginPatterns.some((pattern) => pattern.test(normalizedOrigin));
+
+    callback(null, isAllowed);
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+
 const normalizeLegacyImageUrls = (value, fieldName = '') => {
   if (typeof value === 'string' && ['image', 'images'].includes(fieldName)) {
     return value.replace(
@@ -61,37 +87,6 @@ app.use((req, res, next) => {
   };
   next();
 });
-
-// Dynamic CORS to allow localhost, 127.0.0.1 on any port during development
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // allow requests with no origin (like mobile apps, curl, or Postman)
-      if (!origin) return callback(null, true);
-
-      const normalizedOrigin = normalizeOrigin(origin);
-      const allowedPatterns = [
-        /^https?:\/\/localhost(:\d+)?$/,
-        /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
-      ];
-
-      const envOrigins = (process.env.CLIENT_ORIGIN || '')
-        .split(',')
-        .map((o) => normalizeOrigin(o))
-        .filter(Boolean);
-
-      if (
-        allowedPatterns.some((pattern) => pattern.test(normalizedOrigin)) ||
-        envOrigins.includes(normalizedOrigin)
-      ) {
-        callback(null, true);
-      } else {
-        callback(null, true); // Permissive in dev to prevent blocking
-      }
-    },
-    credentials: true,
-  })
-);
 
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(uploadsDirectory));
