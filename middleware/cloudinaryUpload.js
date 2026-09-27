@@ -18,7 +18,7 @@ const canSaveLocally = process.env.NODE_ENV !== "production" || Boolean(process.
 
 const cloudinaryConfigurationError = () => {
   const error = new Error(
-    "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in the production server."
+    "Cloudinary is not configured. Set CLOUDINARY_URL or all three variables CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in the production server."
   );
   error.status = 503;
   return error;
@@ -31,6 +31,7 @@ const cloudinaryUploadError = (uploadError) => {
       ? "Cloudinary rejected the upload. Check the production Cloudinary credentials."
       : `Cloudinary upload failed: ${uploadError.message || "Unknown Cloudinary error."}`
   );
+  error.cause = uploadError;
   error.status = isCredentialsError ? 503 : 502;
   return error;
 };
