@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Category from "../models/Category.js";
 import SubCategory from "../models/SubCategory.js";
 import Product from "../models/Product.js";
@@ -12,6 +13,12 @@ const slugify = (value) =>
 
 // CREATE CATEGORY
 export const createCategory = async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({
+      message: "The database is unavailable. Check the server's MongoDB connection and try again.",
+    });
+  }
+
   try {
     const { name, slug, description = "", image = "", imageName = "" } = req.body;
     if (!name?.trim()) {
@@ -19,6 +26,12 @@ export const createCategory = async (req, res) => {
     }
 
     const categorySlug = slugify(slug || name);
+    if (!categorySlug) {
+      return res.status(400).json({
+        message: "Category name or slug must contain at least one letter or number.",
+      });
+    }
+
     const category = await Category.create({
       name: name.trim(),
       slug: categorySlug,
@@ -28,13 +41,16 @@ export const createCategory = async (req, res) => {
     });
     res.status(201).json(category);
   } catch (error) {
-    res.status(error.code === 11000 ? 409 : 500).json({
-      message:
-        error.code === 11000
-          ? "Category slug already exists."
-          : "Failed to create category",
-      error: error.message,
-    });
+    if (error.code === 11000) {
+      return res.status(409).json({ message: "Category slug already exists." });
+    }
+
+    if (error.name === "ValidationError") {
+      return res.status(400).json({ message: "Category details are invalid." });
+    }
+
+    console.error("Failed to create category:", error);
+    return res.status(500).json({ message: "Failed to create category." });
   }
 };
 
