@@ -2,6 +2,12 @@ import mongoose from "mongoose";
 
 const subCategorySchema = new mongoose.Schema(
   {
+    type: {
+      type: String,
+      enum: ["sparepart", "machine"],
+      default: "machine",
+      index: true,
+    },
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",

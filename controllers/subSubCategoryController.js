@@ -8,7 +8,11 @@ const slugify = (value) =>
 
 export const getAllSubSubCategories = async (req, res) => {
   try {
-    const items = await SubSubCategory.find()
+    const type = req.query.type;
+    if (type && !["sparepart", "machine"].includes(type)) {
+      return res.status(400).json({ message: "Type must be sparepart or machine." });
+    }
+    const items = await SubSubCategory.find(type ? { type } : {})
       .populate("category")
       .populate("subCategory")
       .sort({ createdAt: -1, _id: -1 });
@@ -22,12 +26,19 @@ export const getSubSubCategoriesBySlugs = async (req, res) => {
   try {
     const categorySlug = decodeURIComponent(req.params.categorySlug).trim();
     const subCategorySlug = decodeURIComponent(req.params.subCategorySlug).trim();
-    const category = await Category.findOne({ slug: new RegExp(`^${escapeRegex(categorySlug)}$`, "i") });
+    if (req.query.type && !["sparepart", "machine"].includes(req.query.type)) {
+      return res.status(400).json({ message: "Type must be sparepart or machine." });
+    }
+    const category = await Category.findOne({
+      slug: new RegExp(`^${escapeRegex(categorySlug)}$`, "i"),
+      ...(req.query.type ? { type: req.query.type } : {}),
+    });
     if (!category) return res.status(404).json({ message: "Category not found." });
 
     const subCategory = await SubCategory.findOne({
       slug: new RegExp(`^${escapeRegex(subCategorySlug)}$`, "i"),
       category: category._id,
+      type: category.type,
     });
     if (!subCategory) return res.status(404).json({ message: "Subcategory not found." });
 
@@ -44,9 +55,16 @@ export const getSubSubCategoriesBySlugs = async (req, res) => {
 
 export const getProductsBySubSubCategory = async (req, res) => {
   try {
-    const category = await Category.findOne({ slug: req.params.categorySlug });
+    const category = await Category.findOne({
+      slug: req.params.categorySlug,
+      ...(req.query.type ? { type: req.query.type } : {}),
+    });
     if (!category) return res.status(404).json({ message: "Category not found." });
-    const subCategory = await SubCategory.findOne({ slug: req.params.subCategorySlug, category: category._id });
+    const subCategory = await SubCategory.findOne({
+      slug: req.params.subCategorySlug,
+      category: category._id,
+      type: category.type,
+    });
     if (!subCategory) return res.status(404).json({ message: "Subcategory not found." });
     const subSubCategory = await SubSubCategory.findOne({
       slug: req.params.subSubCategorySlug,
@@ -55,7 +73,12 @@ export const getProductsBySubSubCategory = async (req, res) => {
     });
     if (!subSubCategory) return res.status(404).json({ message: "Sub-subcategory not found." });
 
-    const products = await Product.find({ category: category._id, subCategory: subCategory._id, subSubCategory: subSubCategory._id })
+    const products = await Product.find({
+      category: category._id,
+      subCategory: subCategory._id,
+      subSubCategory: subSubCategory._id,
+      type: category.type,
+    })
       .populate("category")
       .populate("subCategory")
       .populate("subSubCategory")
@@ -76,14 +99,17 @@ export const createSubSubCategory = async (req, res) => {
       return res.status(400).json({ message: "Main category, subcategory, and name are required." });
     }
 
-    const [category, subCategory] = await Promise.all([
-      Category.findById(categoryId),
-      SubCategory.findOne({ _id: subCategoryId, category: categoryId }),
-    ]);
+    const category = await Category.findById(categoryId);
     if (!category) return res.status(404).json({ message: "Main category not found." });
+    const subCategory = await SubCategory.findOne({
+      _id: subCategoryId,
+      category: categoryId,
+      type: category.type,
+    });
     if (!subCategory) return res.status(404).json({ message: "Subcategory does not belong to this main category." });
 
     const item = await SubSubCategory.create({
+      type: category.type,
       category: category._id,
       subCategory: subCategory._id,
       name: name.trim(),

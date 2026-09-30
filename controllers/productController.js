@@ -1,5 +1,6 @@
 import Category from "../models/Category.js";
 import SubCategory from "../models/SubCategory.js";
+import SubSubCategory from "../models/SubSubCategory.js";
 import Product from "../models/Product.js";
 
 const slugify = (value) =>
@@ -42,6 +43,7 @@ export const createProduct = async (req, res) => {
       subCategoryId,
       subSubCategoryId,
       subCategorySlug,
+      type,
       name,
       slug,
       partCode = "",
@@ -66,17 +68,28 @@ export const createProduct = async (req, res) => {
         message: "Product name is required.",
       });
     }
+    if (type && !["sparepart", "machine"].includes(type)) {
+      return res.status(400).json({ message: "Product type must be sparepart or machine." });
+    }
 
     let category;
     if (categoryId) {
-      category = await Category.findById(categoryId);
+      category = await Category.findOne({
+        _id: categoryId,
+        ...(type ? { type } : {}),
+      });
     } else if (categorySlug) {
-      category = await Category.findOne({ slug: categorySlug });
+      category = await Category.findOne({
+        slug: categorySlug,
+        ...(type ? { type } : {}),
+      });
     }
 
     if (!category) {
-      // If no category found, pick the first existing one or return 400
-      category = await Category.findOne();
+      if (categoryId || categorySlug) {
+        return res.status(400).json({ message: "Select a category of the product type." });
+      }
+      category = await Category.findOne(type ? { type } : {});
       if (!category) {
         return res.status(400).json({ message: "Please create a category first." });
       }
@@ -84,26 +97,49 @@ export const createProduct = async (req, res) => {
 
     let subCategory;
     if (subCategoryId) {
-      subCategory = await SubCategory.findById(subCategoryId);
+      subCategory = await SubCategory.findOne({
+        _id: subCategoryId,
+        category: category._id,
+        type: category.type,
+      });
     } else if (subCategorySlug) {
       subCategory = await SubCategory.findOne({
         slug: subCategorySlug,
         category: category._id,
+        type: category.type,
       });
     }
 
     if (!subCategory) {
-      // Pick first subcategory in that category, or any subcategory
-      subCategory = await SubCategory.findOne({ category: category._id });
-      if (!subCategory) {
-        subCategory = await SubCategory.findOne();
+      if (subCategoryId || subCategorySlug) {
+        return res.status(400).json({
+          message: "Select a subcategory within the selected category.",
+        });
       }
+      subCategory = await SubCategory.findOne({
+        category: category._id,
+        type: category.type,
+      });
       if (!subCategory) {
         return res.status(400).json({ message: "Please create a subcategory first." });
       }
     }
+    if (subSubCategoryId) {
+      const subSubCategory = await SubSubCategory.findOne({
+        _id: subSubCategoryId,
+        category: category._id,
+        subCategory: subCategory._id,
+        type: category.type,
+      });
+      if (!subSubCategory) {
+        return res.status(400).json({
+          message: "Sub-subcategory does not belong to the selected category hierarchy.",
+        });
+      }
+    }
 
     const product = await Product.create({
+      type: category.type,
       category: category._id,
       subCategory: subCategory._id,
       subSubCategory: subSubCategoryId || null,
@@ -143,15 +179,23 @@ export const createProduct = async (req, res) => {
 // GET ALL PRODUCTS
 export const getProducts = async (req, res) => {
   try {
-    const { category, subCategory, subSubCategory, search } = req.query;
+    const { category, subCategory, subSubCategory, search, type } = req.query;
+    if (type && !["sparepart", "machine"].includes(type)) {
+      return res.status(400).json({ message: "Product type must be sparepart or machine." });
+    }
     const filter = {};
+    if (type) filter.type = type;
 
     if (category) {
       if (category.match(/^[0-9a-fA-F]{24}$/)) {
         filter.category = category;
       } else {
-        const cat = await Category.findOne({ slug: category });
-        if (cat) filter.category = cat._id;
+        const cat = await Category.findOne({
+          slug: category,
+          ...(type ? { type } : {}),
+        });
+        if (!cat) return res.status(200).json([]);
+        filter.category = cat._id;
       }
     }
 
@@ -159,8 +203,12 @@ export const getProducts = async (req, res) => {
       if (subCategory.match(/^[0-9a-fA-F]{24}$/)) {
         filter.subCategory = subCategory;
       } else {
-        const sub = await SubCategory.findOne({ slug: subCategory });
-        if (sub) filter.subCategory = sub._id;
+        const sub = await SubCategory.findOne({
+          slug: subCategory,
+          ...(type ? { type } : {}),
+        });
+        if (!sub) return res.status(200).json([]);
+        filter.subCategory = sub._id;
       }
 
       if (subSubCategory) filter.subSubCategory = subSubCategory;
@@ -177,6 +225,7 @@ export const getProducts = async (req, res) => {
     const products = await Product.find(filter)
       .populate("category")
       .populate("subCategory")
+      .populate("subSubCategory")
       .sort({ createdAt: -1 });
 
     res.status(200).json(products);
@@ -195,9 +244,11 @@ export const getProductBySlug = async (req, res) => {
 
     const product = await Product.findOne({
       slug: productSlug,
+      ...(req.query.type ? { type: req.query.type } : {}),
     })
       .populate("category")
-      .populate("subCategory");
+      .populate("subCategory")
+      .populate("subSubCategory");
 
     if (!product) {
       return res.status(404).json({
@@ -232,9 +283,50 @@ export const updateProduct = async (req, res) => {
       categoryId,
       subCategoryId,
       subSubCategoryId,
+      type,
     } = req.body;
 
     const updateData = {};
+    let category;
+    const productBeforeUpdate = await Product.findById(id).select("category type subCategory");
+    if (!productBeforeUpdate) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+    if (type && type !== productBeforeUpdate.type) {
+      return res.status(400).json({
+        message: "Product type cannot be changed. Select a category of the same type.",
+      });
+    }
+    category = await Category.findOne({
+      _id: categoryId || productBeforeUpdate.category,
+      type: type || productBeforeUpdate.type,
+    });
+    if (!category) {
+      return res.status(400).json({ message: "Select a category of the product type." });
+    }
+    updateData.category = category._id;
+    updateData.type = category.type;
+
+    const subCategory = await SubCategory.findOne({
+      _id: subCategoryId || productBeforeUpdate.subCategory,
+      category: category._id,
+      type: category.type,
+    });
+    if (!subCategory) {
+      return res.status(400).json({ message: "Select a subcategory in the selected category." });
+    }
+    updateData.subCategory = subCategory._id;
+    if (subSubCategoryId) {
+      const subSubCategory = await SubSubCategory.findOne({
+        _id: subSubCategoryId,
+        category: category._id,
+        subCategory: subCategory._id,
+        type: category.type,
+      });
+      if (!subSubCategory) {
+        return res.status(400).json({ message: "Select a sub-subcategory in the chosen category hierarchy." });
+      }
+    }
     if (name) updateData.name = name.trim();
     if (slug || name) updateData.slug = slugify(slug || name);
     if (partCode !== undefined) updateData.partCode = partCode;
@@ -258,8 +350,6 @@ export const updateProduct = async (req, res) => {
     }
     if (compatibleMachines !== undefined) updateData.compatibleMachines = compatibleMachines;
     if (inStock !== undefined) updateData.inStock = inStock;
-    if (categoryId) updateData.category = categoryId;
-    if (subCategoryId) updateData.subCategory = subCategoryId;
     if (subSubCategoryId !== undefined) updateData.subSubCategory = subSubCategoryId || null;
 
     const product = await Product.findByIdAndUpdate(id, updateData, {

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import connectDB from './config/db.js';
 import categoryRoutes from './routes/categoryRoutes.js';
 import contactRoutes from './routes/contact.js';
+import documentRoutes from './routes/documentRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import subCategoryRoutes from './routes/subCategoryRoutes.js';
 import subSubCategoryRoutes from './routes/subSubCategoryRoutes.js';
@@ -13,6 +14,7 @@ import Category from './models/Category.js';
 import SubCategory from './models/SubCategory.js';
 import Product from './models/Product.js';
 import { seedDatabase } from './seed.js';
+import backfillCatalogTypes from './migrations/backfillCatalogTypes.js';
 import { uploadsDirectory } from './config/uploads.js';
 
 const app = express();
@@ -117,6 +119,7 @@ app.get('/api/stats', async (req, res) => {
 });
 
 app.use('/api/inquiries', contactRoutes);
+app.use('/api/documents', documentRoutes);
 app.use('/api/spare/categories', categoryRoutes);
 app.use('/api/subcategories', subCategoryRoutes);
 app.use('/api/sub-subcategories', subSubCategoryRoutes);
@@ -144,13 +147,16 @@ app.use((error, req, res, next) => {
   res.status(status).json({
     message:
       error.code === 'LIMIT_FILE_SIZE'
-        ? 'Image file is too large. Maximum allowed size is 5 MB.'
+        ? req.path.startsWith('/api/documents/')
+          ? 'Document is too large. Maximum allowed size is 10 MB.'
+          : 'Image file is too large. Maximum allowed size is 5 MB.'
         : error.message || 'Internal server error',
   });
 });
 
 connectDB()
   .then(async () => {
+    await backfillCatalogTypes();
     // Seed initial data if empty
     try {
       await seedDatabase(false);

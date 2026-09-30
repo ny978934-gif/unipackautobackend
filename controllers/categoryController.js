@@ -20,7 +20,17 @@ export const createCategory = async (req, res) => {
   }
 
   try {
-    const { name, slug, description = "", image = "", imageName = "" } = req.body;
+    const {
+      name,
+      slug,
+      description = "",
+      image = "",
+      imageName = "",
+      type = "sparepart",
+    } = req.body;
+    if (!["sparepart", "machine"].includes(type)) {
+      return res.status(400).json({ message: "Category type must be sparepart or machine." });
+    }
     if (!name?.trim()) {
       return res.status(400).json({ message: "Category name is required." });
     }
@@ -33,6 +43,7 @@ export const createCategory = async (req, res) => {
     }
 
     const category = await Category.create({
+      type,
       name: name.trim(),
       slug: categorySlug,
       description,
@@ -57,7 +68,11 @@ export const createCategory = async (req, res) => {
 // GET ALL CATEGORIES
 export const getCategories = async (req, res) => {
   try {
-    const categories = await Category.find().sort({ createdAt: -1, _id: -1 });
+    const { type } = req.query;
+    if (type && !["sparepart", "machine"].includes(type)) {
+      return res.status(400).json({ message: "Category type must be sparepart or machine." });
+    }
+    const categories = await Category.find(type ? { type } : {}).sort({ createdAt: -1, _id: -1 });
     res.status(200).json(categories);
   } catch (error) {
     res.status(500).json({
@@ -72,9 +87,14 @@ export const getCategoryBySlug = async (req, res) => {
   try {
     const { categorySlug } = req.params;
 
-    const category = await Category.findOne({
-      slug: categorySlug,
-    });
+    const filter = { slug: categorySlug };
+    if (req.query.type) {
+      if (!["sparepart", "machine"].includes(req.query.type)) {
+        return res.status(400).json({ message: "Category type must be sparepart or machine." });
+      }
+      filter.type = req.query.type;
+    }
+    const category = await Category.findOne(filter);
 
     if (!category) {
       return res.status(404).json({
@@ -105,6 +125,12 @@ export const updateCategory = async (req, res) => {
     const { name, slug, description, image, imageName } = req.body;
 
     const updateData = {};
+    if (req.body.type !== undefined) {
+      if (!["sparepart", "machine"].includes(req.body.type)) {
+        return res.status(400).json({ message: "Category type must be sparepart or machine." });
+      }
+      updateData.type = req.body.type;
+    }
     if (name) updateData.name = name.trim();
     if (slug || name) updateData.slug = slugify(slug || name);
     if (description !== undefined) updateData.description = description;
@@ -120,6 +146,14 @@ export const updateCategory = async (req, res) => {
 
     if (!category) {
       return res.status(404).json({ message: "Category not found" });
+    }
+
+    if (updateData.type) {
+      await Promise.all([
+        SubCategory.updateMany({ category: category._id }, { $set: { type: category.type } }),
+        SubSubCategory.updateMany({ category: category._id }, { $set: { type: category.type } }),
+        Product.updateMany({ category: category._id }, { $set: { type: category.type } }),
+      ]);
     }
 
     res.status(200).json(category);

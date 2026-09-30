@@ -20,9 +20,15 @@ export const createSubCategory = async (req, res) => {
 
     let category;
     if (categoryId) {
-      category = await Category.findById(categoryId);
+      category = await Category.findOne({
+        _id: categoryId,
+        ...(req.body.type ? { type: req.body.type } : {}),
+      });
     } else if (categorySlug) {
-      category = await Category.findOne({ slug: categorySlug });
+      category = await Category.findOne({
+        slug: categorySlug,
+        ...(req.body.type ? { type: req.body.type } : {}),
+      });
     }
 
     if (!category) {
@@ -30,6 +36,7 @@ export const createSubCategory = async (req, res) => {
     }
 
     const subCategory = await SubCategory.create({
+      type: category.type,
       category: category._id,
       name: name.trim(),
       slug: slugify(slug || name),
@@ -55,7 +62,11 @@ export const createSubCategory = async (req, res) => {
 // GET ALL SUBCATEGORIES
 export const getAllSubCategories = async (req, res) => {
   try {
-    const subCategories = await SubCategory.find()
+    const type = req.query.type;
+    if (type && !["sparepart", "machine"].includes(type)) {
+      return res.status(400).json({ message: "Type must be sparepart or machine." });
+    }
+    const subCategories = await SubCategory.find(type ? { type } : {})
       .populate("category")
       .sort({ createdAt: -1, _id: -1 });
 
@@ -73,9 +84,11 @@ export const getSubCategories = async (req, res) => {
   try {
     const { categorySlug } = req.params;
 
-    const category = await Category.findOne({
+    const categoryFilter = {
       slug: categorySlug,
-    });
+      ...(req.query.type ? { type: req.query.type } : {}),
+    };
+    const category = await Category.findOne(categoryFilter);
 
     if (!category) {
       return res.status(404).json({
@@ -105,9 +118,13 @@ export const getSubCategories = async (req, res) => {
 export const getProductsBySubCategory = async (req, res) => {
   try {
     const { categorySlug, subCategorySlug } = req.params;
+    if (req.query.type && !["sparepart", "machine"].includes(req.query.type)) {
+      return res.status(400).json({ message: "Type must be sparepart or machine." });
+    }
 
     const category = await Category.findOne({
       slug: categorySlug,
+      ...(req.query.type ? { type: req.query.type } : {}),
     });
 
     if (!category) {
@@ -119,6 +136,7 @@ export const getProductsBySubCategory = async (req, res) => {
     const subCategory = await SubCategory.findOne({
       slug: subCategorySlug,
       category: category._id,
+      type: category.type,
     });
 
     if (!subCategory) {
@@ -130,6 +148,7 @@ export const getProductsBySubCategory = async (req, res) => {
     const products = await Product.find({
       category: category._id,
       subCategory: subCategory._id,
+      type: category.type,
     }).sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -163,7 +182,12 @@ export const updateSubCategory = async (req, res) => {
       updateData.images = updateData.image ? [updateData.image] : [];
     }
     if (imageName !== undefined) updateData.imageName = imageName;
-    if (categoryId) updateData.category = categoryId;
+    if (categoryId) {
+      const category = await Category.findById(categoryId);
+      if (!category) return res.status(404).json({ message: "Main category not found." });
+      updateData.category = category._id;
+      updateData.type = category.type;
+    }
 
     const subCategory = await SubCategory.findByIdAndUpdate(id, updateData, {
       new: true,
@@ -172,6 +196,19 @@ export const updateSubCategory = async (req, res) => {
 
     if (!subCategory) {
       return res.status(404).json({ message: "Subcategory not found" });
+    }
+
+    if (updateData.category) {
+      await Promise.all([
+        SubSubCategory.updateMany(
+          { subCategory: subCategory._id },
+          { $set: { category: subCategory.category, type: subCategory.type } }
+        ),
+        Product.updateMany(
+          { subCategory: subCategory._id },
+          { $set: { category: subCategory.category, type: subCategory.type } }
+        ),
+      ]);
     }
 
     res.status(200).json(subCategory);

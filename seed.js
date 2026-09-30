@@ -12,41 +12,45 @@ export const seedDatabase = async (force = false) => {
       await mongoose.connect(MONGO_URI);
     }
 
-    const categoryCount = await Category.countDocuments();
+    const categoryCount = await Category.countDocuments({ type: "sparepart" });
     if (categoryCount > 0 && !force) {
-      console.log(`Database already has ${categoryCount} categories. Skipping seed.`);
+      console.log(`Database already has ${categoryCount} sparepart categories. Skipping seed.`);
       return;
     }
 
     console.log("Seeding database with default categories, subcategories, and products...");
 
     if (force) {
-      await Product.deleteMany({});
-      await SubCategory.deleteMany({});
-      await Category.deleteMany({});
+      await Product.deleteMany({ type: "sparepart" });
+      await SubCategory.deleteMany({ type: "sparepart" });
+      await Category.deleteMany({ type: "sparepart" });
     }
 
     // 1. Create Categories
     const categoriesData = [
       {
+        type: "sparepart",
         name: "Semi Automatic Strapping Machine Spare Parts",
         slug: "semi-automatic-strapping-machine-spare-parts",
         image: "https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=800&q=80",
         description: "High quality spare parts engineered for heavy-duty semi automatic strapping machines.",
       },
       {
+        type: "sparepart",
         name: "Sealing Machine Parts",
         slug: "sealing-machine-parts",
         image: "https://images.unsplash.com/photo-1565814329452-e1efa11c5b89?auto=format&fit=crop&w=800&q=80",
         description: "Reliable replacement parts for continuous band sealers and industrial heat sealers.",
       },
       {
+        type: "sparepart",
         name: "Packaging Machine Parts",
         slug: "packaging-machine-parts",
         image: "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=800&q=80",
         description: "Premium spare parts for carton sealers, vacuum sealers, and wrapper lines.",
       },
       {
+        type: "sparepart",
         name: "Conveyor Machine Parts",
         slug: "conveyor-machine-parts",
         image: "https://images.unsplash.com/photo-1565610222536-ef125c59da2e?auto=format&fit=crop&w=800&q=80",
@@ -127,6 +131,7 @@ export const seedDatabase = async (force = false) => {
         savedSubCategories[key] = existing;
       } else {
         savedSubCategories[key] = await SubCategory.create({
+          type: parentCat.type,
           category: parentCat._id,
           name: sub.name,
           slug: sub.slug,
@@ -286,6 +291,7 @@ export const seedDatabase = async (force = false) => {
       const existing = await Product.findOne({ slug: prod.slug });
       if (!existing) {
         await Product.create({
+          type: parentCat.type,
           category: parentCat._id,
           subCategory: parentSub._id,
           name: prod.name,

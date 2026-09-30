@@ -2,6 +2,12 @@ import mongoose from "mongoose";
 
 const categorySchema = new mongoose.Schema(
   {
+    type: {
+      type: String,
+      enum: ["sparepart", "machine"],
+      default: "machine",
+      index: true,
+    },
     name: {
       type: String,
       required: true,
@@ -11,7 +17,6 @@ const categorySchema = new mongoose.Schema(
     slug: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
     },
 
@@ -35,5 +40,7 @@ const categorySchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+categorySchema.index({ type: 1, slug: 1 }, { unique: true });
 
 export default mongoose.model("Category", categorySchema);
