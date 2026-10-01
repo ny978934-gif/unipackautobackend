@@ -4,6 +4,7 @@ import {
   getSubSubCategoriesBySlugs,
   getProductsBySubSubCategory,
   createSubSubCategory,
+  updateSubSubCategory,
   deleteSubSubCategory,
 } from "../controllers/subSubCategoryController.js";
 import { uploadMultipleImages } from "../middleware/cloudinaryUpload.js";
@@ -14,6 +15,7 @@ router.get("/", getAllSubSubCategories);
 router.get("/category/:categorySlug/:subCategorySlug", getSubSubCategoriesBySlugs);
 router.get("/category/:categorySlug/:subCategorySlug/:subSubCategorySlug/products", getProductsBySubSubCategory);
 router.post("/", uploadMultipleImages, createSubSubCategory);
+router.put("/:id", uploadMultipleImages, updateSubSubCategory);
 router.delete("/:id", deleteSubSubCategory);
 
 export default router;

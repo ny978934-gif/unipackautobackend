@@ -170,9 +170,21 @@ export const updateSubCategory = async (req, res) => {
     const { id } = req.params;
     const { name, slug, description, image, imageName, categoryId } = req.body;
 
+    const existingSubCategory = await SubCategory.findById(id);
+    if (!existingSubCategory) {
+      return res.status(404).json({ message: "Subcategory not found." });
+    }
+
     const updateData = {};
-    if (name) updateData.name = name.trim();
-    if (slug || name) updateData.slug = slugify(slug || name);
+    if (name !== undefined) {
+      if (!name.trim()) return res.status(400).json({ message: "Name is required." });
+      updateData.name = name.trim();
+    }
+    if (slug !== undefined || name !== undefined) {
+      const nextSlug = slugify(slug || name || existingSubCategory.name);
+      if (!nextSlug) return res.status(400).json({ message: "Name or slug must contain a letter or number." });
+      updateData.slug = nextSlug;
+    }
     if (description !== undefined) updateData.description = description;
     if (req.uploadedImageUrls?.length) {
       updateData.image = req.uploadedImageUrls[0];
@@ -183,10 +195,9 @@ export const updateSubCategory = async (req, res) => {
     }
     if (imageName !== undefined) updateData.imageName = imageName;
     if (categoryId) {
-      const category = await Category.findById(categoryId);
+      const category = await Category.findOne({ _id: categoryId, type: existingSubCategory.type });
       if (!category) return res.status(404).json({ message: "Main category not found." });
       updateData.category = category._id;
-      updateData.type = category.type;
     }
 
     const subCategory = await SubCategory.findByIdAndUpdate(id, updateData, {
@@ -194,29 +205,28 @@ export const updateSubCategory = async (req, res) => {
       runValidators: true,
     }).populate("category");
 
-    if (!subCategory) {
-      return res.status(404).json({ message: "Subcategory not found" });
-    }
-
     if (updateData.category) {
       await Promise.all([
         SubSubCategory.updateMany(
           { subCategory: subCategory._id },
-          { $set: { category: subCategory.category, type: subCategory.type } }
+          { $set: { category: subCategory.category._id, type: subCategory.type } }
         ),
         Product.updateMany(
           { subCategory: subCategory._id },
-          { $set: { category: subCategory.category, type: subCategory.type } }
+          { $set: { category: subCategory.category._id, type: subCategory.type } }
         ),
       ]);
     }
 
     res.status(200).json(subCategory);
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to update subcategory",
-      error: error.message,
-    });
+    if (error.code === 11000) {
+      return res.status(409).json({ message: "Subcategory slug already exists." });
+    }
+    if (error.name === "ValidationError") {
+      return res.status(400).json({ message: "Subcategory details are invalid." });
+    }
+    res.status(500).json({ message: "Failed to update subcategory", error: error.message });
   }
 };
 
