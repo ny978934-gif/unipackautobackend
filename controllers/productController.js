@@ -1,7 +1,6 @@
 import Category from "../models/Category.js";
-import SubCategory from "../models/SubCategory.js";
-import SubSubCategory from "../models/SubSubCategory.js";
 import Product from "../models/Product.js";
+import Subcategory from "../models/Subcategory.js";
 
 const slugify = (value) =>
   value
@@ -10,44 +9,35 @@ const slugify = (value) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
-const parseSpecifications = (value) => {
-  if (Array.isArray(value)) return value.filter((item) => item?.label && item?.value);
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((item) => item?.label && item?.value) : [];
-  } catch {
-    return [];
-  }
-};
-
-const parseImages = (value) => {
-  if (Array.isArray(value)) return value.filter((url) => typeof url === "string" && url.trim());
+const parseArray = (value) => {
+  if (Array.isArray(value)) return value;
   if (typeof value !== "string" || !value.trim()) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((url) => typeof url === "string" && url.trim())
-      : [value];
+    return Array.isArray(parsed) ? parsed : [value];
   } catch {
     return [value];
   }
 };
 
-// CREATE PRODUCT
+const parseSpecifications = (value) =>
+  parseArray(value).filter((item) => item?.label?.trim() && item?.value?.trim());
+
+const populateCategory = (query) => query.populate("category").populate("subcategory");
+
 export const createProduct = async (req, res) => {
   try {
     const {
       categoryId,
+      subcategoryId,
       categorySlug,
-      subCategoryId,
-      subSubCategoryId,
-      subCategorySlug,
-      type,
+      type = "sparepart",
       name,
       slug,
       partCode = "",
       price = 0,
+      stock = 0,
+      uom = "",
       image = "",
       images = [],
       description = "",
@@ -55,338 +45,218 @@ export const createProduct = async (req, res) => {
       compatibleMachines = [],
       inStock = true,
     } = req.body;
-    const productImages = req.uploadedImageUrls?.length
-      ? req.uploadedImageUrls
-      : parseImages(images).length
-      ? parseImages(images)
-      : image
-      ? [image]
-      : [];
-
     if (!name?.trim()) {
-      return res.status(400).json({
-        message: "Product name is required.",
-      });
+      return res.status(400).json({ message: "Product name is required." });
     }
-    if (type && !["sparepart", "machine"].includes(type)) {
+    if (!["sparepart", "machine"].includes(type)) {
       return res.status(400).json({ message: "Product type must be sparepart or machine." });
     }
-
-    let category;
-    if (categoryId) {
-      category = await Category.findOne({
-        _id: categoryId,
-        ...(type ? { type } : {}),
-      });
-    } else if (categorySlug) {
-      category = await Category.findOne({
-        slug: categorySlug,
-        ...(type ? { type } : {}),
-      });
-    }
-
+    const category = categoryId
+      ? await Category.findOne({ _id: categoryId, type })
+      : categorySlug
+        ? await Category.findOne({ slug: categorySlug, type })
+        : null;
     if (!category) {
-      if (categoryId || categorySlug) {
-        return res.status(400).json({ message: "Select a category of the product type." });
-      }
-      category = await Category.findOne(type ? { type } : {});
-      if (!category) {
-        return res.status(400).json({ message: "Please create a category first." });
-      }
+      return res.status(400).json({ message: "Select a valid category for this product." });
+    }
+    const subcategory = subcategoryId
+      ? await Subcategory.findOne({ _id: subcategoryId, category: category._id })
+      : null;
+    if (subcategoryId && !subcategory) {
+      return res.status(400).json({ message: "Select a subcategory from the chosen category." });
     }
 
-    let subCategory;
-    if (subCategoryId) {
-      subCategory = await SubCategory.findOne({
-        _id: subCategoryId,
-        category: category._id,
-        type: category.type,
-      });
-    } else if (subCategorySlug) {
-      subCategory = await SubCategory.findOne({
-        slug: subCategorySlug,
-        category: category._id,
-        type: category.type,
-      });
+    const priceValue = Number(price);
+    if (!Number.isFinite(priceValue) || priceValue < 0) {
+      return res.status(400).json({ message: "Price must be a non-negative number." });
+    }
+    const stockValue = Number(stock);
+    if (!Number.isFinite(stockValue) || stockValue < 0) {
+      return res.status(400).json({ message: "Stock must be a non-negative number." });
     }
 
-    if (!subCategory) {
-      if (subCategoryId || subCategorySlug) {
-        return res.status(400).json({
-          message: "Select a subcategory within the selected category.",
-        });
-      }
-      subCategory = await SubCategory.findOne({
-        category: category._id,
-        type: category.type,
-      });
-      if (!subCategory) {
-        return res.status(400).json({ message: "Please create a subcategory first." });
-      }
-    }
-    if (subSubCategoryId) {
-      const subSubCategory = await SubSubCategory.findOne({
-        _id: subSubCategoryId,
-        category: category._id,
-        subCategory: subCategory._id,
-        type: category.type,
-      });
-      if (!subSubCategory) {
-        return res.status(400).json({
-          message: "Sub-subcategory does not belong to the selected category hierarchy.",
-        });
-      }
-    }
-
+    const providedImages = parseArray(images).filter((url) => typeof url === "string" && url.trim());
+    const productImages = req.uploadedImageUrls?.length
+      ? req.uploadedImageUrls
+      : providedImages.length
+        ? providedImages
+        : image
+          ? [image]
+          : [];
     const product = await Product.create({
-      type: category.type,
+      type,
       category: category._id,
-      subCategory: subCategory._id,
-      subSubCategory: subSubCategoryId || null,
+      subcategory: subcategory?._id || null,
       name: name.trim(),
-      slug: slugify(slug || name),
-      partCode,
-      price: Number(price) || 0,
+      slug: slugify(slug || name) || `product-${Date.now()}`,
+      partCode: String(partCode).trim(),
+      price: priceValue,
+      stock: stockValue,
+      uom: String(uom).trim(),
       image: productImages[0] || "",
       images: productImages,
       description,
       specifications: parseSpecifications(specifications),
       compatibleMachines: Array.isArray(compatibleMachines)
         ? compatibleMachines
-        : typeof compatibleMachines === "string"
-        ? compatibleMachines.split(",").map((s) => s.trim()).filter(Boolean)
-        : [],
+        : String(compatibleMachines).split(",").map((item) => item.trim()).filter(Boolean),
       inStock: inStock !== false && inStock !== "false",
     });
 
-    const populated = await Product.findById(product._id)
-      .populate("category")
-      .populate("subCategory")
-      .populate("subSubCategory");
-
-    res.status(201).json(populated);
+    return res.status(201).json(await populateCategory(Product.findById(product._id)));
   } catch (error) {
-    res.status(error.code === 11000 ? 409 : 500).json({
-      message:
-        error.code === 11000
-          ? "Product slug already exists."
-          : "Failed to create product",
-      error: error.message,
+    return res.status(error.code === 11000 ? 409 : 500).json({
+      message: error.code === 11000 ? "Product slug already exists." : "Failed to create product.",
     });
   }
 };
 
-// GET ALL PRODUCTS
 export const getProducts = async (req, res) => {
   try {
-    const { category, subCategory, subSubCategory, search, type } = req.query;
+    const { category, search, type } = req.query;
     if (type && !["sparepart", "machine"].includes(type)) {
       return res.status(400).json({ message: "Product type must be sparepart or machine." });
     }
     const filter = {};
     if (type) filter.type = type;
-
     if (category) {
-      if (category.match(/^[0-9a-fA-F]{24}$/)) {
-        filter.category = category;
-      } else {
-        const cat = await Category.findOne({
-          slug: category,
-          ...(type ? { type } : {}),
-        });
-        if (!cat) return res.status(200).json([]);
-        filter.category = cat._id;
-      }
+      const categoryRecord = /^[0-9a-fA-F]{24}$/.test(category)
+        ? await Category.findOne({ _id: category, ...(type ? { type } : {}) })
+        : await Category.findOne({ slug: category, ...(type ? { type } : {}) });
+      if (!categoryRecord) return res.status(200).json([]);
+      filter.category = categoryRecord._id;
     }
-
-    if (subCategory) {
-      if (subCategory.match(/^[0-9a-fA-F]{24}$/)) {
-        filter.subCategory = subCategory;
-      } else {
-        const sub = await SubCategory.findOne({
-          slug: subCategory,
-          ...(type ? { type } : {}),
-        });
-        if (!sub) return res.status(200).json([]);
-        filter.subCategory = sub._id;
-      }
-
-      if (subSubCategory) filter.subSubCategory = subSubCategory;
-    }
-
-    if (search) {
+    if (search?.trim()) {
+      const safeSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { partCode: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { name: { $regex: safeSearch, $options: "i" } },
+        { partCode: { $regex: safeSearch, $options: "i" } },
+        { description: { $regex: safeSearch, $options: "i" } },
       ];
     }
-
-    const products = await Product.find(filter)
-      .populate("category")
-      .populate("subCategory")
-      .populate("subSubCategory")
-      .sort({ createdAt: -1 });
-
-    res.status(200).json(products);
+    const products = await populateCategory(Product.find(filter).sort({ createdAt: -1 }));
+    return res.status(200).json(products);
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch products",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Failed to fetch products.", error: error.message });
   }
 };
 
-// GET PRODUCT BY SLUG
 export const getProductBySlug = async (req, res) => {
   try {
-    const { productSlug } = req.params;
-
-    const product = await Product.findOne({
-      slug: productSlug,
+    const product = await populateCategory(Product.findOne({
+      slug: req.params.productSlug,
       ...(req.query.type ? { type: req.query.type } : {}),
-    })
-      .populate("category")
-      .populate("subCategory")
-      .populate("subSubCategory");
-
-    if (!product) {
-      return res.status(404).json({
-        message: "Product not found",
-      });
-    }
-
-    res.status(200).json(product);
+    }));
+    if (!product) return res.status(404).json({ message: "Product not found." });
+    return res.status(200).json(product);
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch product",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Failed to fetch product.", error: error.message });
   }
 };
 
-// UPDATE PRODUCT
 export const updateProduct = async (req, res) => {
   try {
-    const { id } = req.params;
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: "Product not found." });
+
     const {
+      categoryId,
+      subcategoryId,
       name,
       slug,
       partCode,
       price,
+      stock,
+      uom,
       image,
       images,
       description,
       specifications,
       compatibleMachines,
       inStock,
-      categoryId,
-      subCategoryId,
-      subSubCategoryId,
       type,
     } = req.body;
-
-    const updateData = {};
-    let category;
-    const productBeforeUpdate = await Product.findById(id).select("category type subCategory");
-    if (!productBeforeUpdate) {
-      return res.status(404).json({ message: "Product not found" });
+    if (type && type !== product.type) {
+      return res.status(400).json({ message: "Product type cannot be changed." });
     }
-    if (type && type !== productBeforeUpdate.type) {
-      return res.status(400).json({
-        message: "Product type cannot be changed. Select a category of the same type.",
-      });
+    if (categoryId) {
+      const category = await Category.findOne({ _id: categoryId, type: product.type });
+      if (!category) return res.status(400).json({ message: "Select a valid category for this product." });
+      product.category = category._id;
     }
-    category = await Category.findOne({
-      _id: categoryId || productBeforeUpdate.category,
-      type: type || productBeforeUpdate.type,
-    });
-    if (!category) {
-      return res.status(400).json({ message: "Select a category of the product type." });
-    }
-    updateData.category = category._id;
-    updateData.type = category.type;
-
-    const subCategory = await SubCategory.findOne({
-      _id: subCategoryId || productBeforeUpdate.subCategory,
-      category: category._id,
-      type: category.type,
-    });
-    if (!subCategory) {
-      return res.status(400).json({ message: "Select a subcategory in the selected category." });
-    }
-    updateData.subCategory = subCategory._id;
-    if (subSubCategoryId) {
-      const subSubCategory = await SubSubCategory.findOne({
-        _id: subSubCategoryId,
-        category: category._id,
-        subCategory: subCategory._id,
-        type: category.type,
-      });
-      if (!subSubCategory) {
-        return res.status(400).json({ message: "Select a sub-subcategory in the chosen category hierarchy." });
+    if (subcategoryId !== undefined) {
+      if (!subcategoryId) {
+        product.subcategory = null;
+      } else {
+        const subcategory = await Subcategory.findOne({
+          _id: subcategoryId,
+          category: categoryId || product.category,
+        });
+        if (!subcategory) {
+          return res.status(400).json({ message: "Select a subcategory from the chosen category." });
+        }
+        product.subcategory = subcategory._id;
       }
+    } else if (categoryId) {
+      product.subcategory = null;
     }
-    if (name) updateData.name = name.trim();
-    if (slug || name) updateData.slug = slugify(slug || name);
-    if (partCode !== undefined) updateData.partCode = partCode;
-    if (price !== undefined) updateData.price = Number(price);
+    if (name !== undefined) {
+      if (!name.trim()) return res.status(400).json({ message: "Product name is required." });
+      product.name = name.trim();
+    }
+    if (slug !== undefined || name !== undefined) {
+      product.slug = slugify(slug || name || product.name) || `product-${product._id}`;
+    }
+    if (partCode !== undefined) product.partCode = partCode;
+    if (price !== undefined) {
+      const priceValue = Number(price);
+      if (!Number.isFinite(priceValue) || priceValue < 0) {
+        return res.status(400).json({ message: "Price must be a non-negative number." });
+      }
+      product.price = priceValue;
+    }
+    if (stock !== undefined) {
+      const stockValue = Number(stock);
+      if (!Number.isFinite(stockValue) || stockValue < 0) {
+        return res.status(400).json({ message: "Stock must be a non-negative number." });
+      }
+      product.stock = stockValue;
+    }
+    if (uom !== undefined) product.uom = String(uom).trim();
     if (req.uploadedImageUrls?.length) {
-      updateData.image = req.uploadedImageUrls[0];
-      updateData.images = req.uploadedImageUrls;
+      product.images = req.uploadedImageUrls;
+      product.image = req.uploadedImageUrls[0];
+    } else if (images !== undefined) {
+      product.images = parseArray(images).filter((url) => typeof url === "string" && url.trim());
+      product.image = image !== undefined ? image : product.images[0] || "";
     } else if (image !== undefined) {
-      updateData.image = image;
-      if (images === undefined) updateData.images = image ? [image] : [];
+      product.image = image;
+      product.images = image ? [image] : [];
     }
-    if (images !== undefined) {
-      updateData.images = parseImages(images);
-      if (image === undefined && updateData.images.length) {
-        updateData.image = updateData.images[0];
-      }
+    if (description !== undefined) product.description = description;
+    if (specifications !== undefined) product.specifications = parseSpecifications(specifications);
+    if (compatibleMachines !== undefined) {
+      product.compatibleMachines = Array.isArray(compatibleMachines)
+        ? compatibleMachines
+        : String(compatibleMachines).split(",").map((item) => item.trim()).filter(Boolean);
     }
-    if (description !== undefined) updateData.description = description;
-    if (specifications !== undefined) {
-      updateData.specifications = parseSpecifications(specifications);
-    }
-    if (compatibleMachines !== undefined) updateData.compatibleMachines = compatibleMachines;
-    if (inStock !== undefined) updateData.inStock = inStock;
-    if (subSubCategoryId !== undefined) updateData.subSubCategory = subSubCategoryId || null;
+    if (inStock !== undefined) product.inStock = inStock !== false && inStock !== "false";
 
-    const product = await Product.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    })
-      .populate("category")
-      .populate("subCategory");
-
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    res.status(200).json(product);
+    await product.save();
+    return res.status(200).json(await populateCategory(Product.findById(product._id)));
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to update product",
-      error: error.message,
+    return res.status(error.code === 11000 ? 409 : 500).json({
+      message: error.code === 11000 ? "Product slug already exists." : "Failed to update product.",
     });
   }
 };
 
-// DELETE PRODUCT
 export const deleteProduct = async (req, res) => {
   try {
-    const { id } = req.params;
-    const product = await Product.findByIdAndDelete(id);
-
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    res.status(200).json({ message: "Product deleted successfully" });
+    const product = await Product.findByIdAndDelete(req.params.id);
+    if (!product) return res.status(404).json({ message: "Product not found." });
+    return res.status(200).json({ message: "Product deleted successfully." });
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to delete product",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Failed to delete product.", error: error.message });
   }
 };

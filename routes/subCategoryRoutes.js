@@ -1,21 +1,16 @@
 import express from "express";
 import {
-  getAllSubCategories,
-  getSubCategories,
-  getProductsBySubCategory,
-  createSubCategory,
-  updateSubCategory,
-  deleteSubCategory,
-} from "../controllers/subCategoryController.js";
-import { uploadMultipleImages } from "../middleware/cloudinaryUpload.js";
+  createSubcategory,
+  deleteSubcategory,
+  getSubcategories,
+  updateSubcategory,
+} from "../controllers/subcategoryController.js";
 
 const router = express.Router();
 
-router.get("/", getAllSubCategories);
-router.post("/", uploadMultipleImages, createSubCategory);
-router.get("/category/:categorySlug", getSubCategories);
-router.get("/category/:categorySlug/:subCategorySlug", getProductsBySubCategory);
-router.put("/:id", uploadMultipleImages, updateSubCategory);
-router.delete("/:id", deleteSubCategory);
+router.get("/", getSubcategories);
+router.post("/", createSubcategory);
+router.put("/:id", updateSubcategory);
+router.delete("/:id", deleteSubcategory);
 
 export default router;

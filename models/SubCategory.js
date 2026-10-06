@@ -1,59 +1,32 @@
 import mongoose from "mongoose";
 
-const subCategorySchema = new mongoose.Schema(
+const subcategorySchema = new mongoose.Schema(
   {
-    type: {
-      type: String,
-      enum: ["sparepart", "machine"],
-      default: "machine",
-      index: true,
-    },
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
       required: true,
+      index: true,
     },
-
     name: {
       type: String,
       required: true,
       trim: true,
     },
-
     slug: {
       type: String,
       required: true,
       trim: true,
     },
-
     description: {
-      type: String,
-      default: "",
-    },
-
-    image: {
-      type: String,
-      default: "",
-    },
-
-    images: [
-      {
-        type: String,
-      },
-    ],
-
-    imageName: {
       type: String,
       default: "",
       trim: true,
     },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-export default mongoose.model(
-  "SubCategory",
-  subCategorySchema
-);
+subcategorySchema.index({ category: 1, slug: 1 }, { unique: true });
+
+export default mongoose.model("Subcategory", subcategorySchema);

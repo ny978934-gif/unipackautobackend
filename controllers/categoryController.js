@@ -1,8 +1,7 @@
 import mongoose from "mongoose";
 import Category from "../models/Category.js";
-import SubCategory from "../models/SubCategory.js";
 import Product from "../models/Product.js";
-import SubSubCategory from "../models/SubSubCategory.js";
+import Subcategory from "../models/Subcategory.js";
 
 const slugify = (value) =>
   value
@@ -102,13 +101,12 @@ export const getCategoryBySlug = async (req, res) => {
       });
     }
 
-    const subCategories = await SubCategory.find({
-      category: category._id,
-    }).sort({ createdAt: -1, _id: -1 });
+    const products = await Product.find({ category: category._id })
+      .sort({ createdAt: -1, _id: -1 });
 
     res.status(200).json({
       category,
-      subCategories,
+      products,
     });
   } catch (error) {
     res.status(500).json({
@@ -149,11 +147,11 @@ export const updateCategory = async (req, res) => {
     }
 
     if (updateData.type) {
-      await Promise.all([
-        SubCategory.updateMany({ category: category._id }, { $set: { type: category.type } }),
-        SubSubCategory.updateMany({ category: category._id }, { $set: { type: category.type } }),
-        Product.updateMany({ category: category._id }, { $set: { type: category.type } }),
-      ]);
+      await Product.updateMany({ category: category._id }, { $set: { type: category.type } });
+      if (category.type === "machine") {
+        await Product.updateMany({ category: category._id }, { $set: { subcategory: null } });
+        await Subcategory.deleteMany({ category: category._id });
+      }
     }
 
     res.status(200).json(category);
@@ -175,10 +173,8 @@ export const deleteCategory = async (req, res) => {
       return res.status(404).json({ message: "Category not found" });
     }
 
-    // Also clean up associated subcategories
-    await SubCategory.deleteMany({ category: id });
-    await SubSubCategory.deleteMany({ category: id });
     await Product.deleteMany({ category: id });
+    await Subcategory.deleteMany({ category: id });
 
     res.status(200).json({ message: "Category deleted successfully" });
   } catch (error) {

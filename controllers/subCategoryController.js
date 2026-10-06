@@ -1,7 +1,6 @@
 import Category from "../models/Category.js";
-import SubCategory from "../models/SubCategory.js";
 import Product from "../models/Product.js";
-import SubSubCategory from "../models/SubSubCategory.js";
+import Subcategory from "../models/Subcategory.js";
 
 const slugify = (value) =>
   value
@@ -10,244 +9,93 @@ const slugify = (value) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
-// CREATE SUBCATEGORY
-export const createSubCategory = async (req, res) => {
+const populateCategory = (query) => query.populate("category");
+
+export const getSubcategories = async (req, res) => {
   try {
-    const { categoryId, categorySlug, name, slug, description = "", image = "", imageName = "" } = req.body;
-    if (!name?.trim()) {
-      return res.status(400).json({ message: "Name is required." });
+    const filter = {};
+    if (req.query.categoryId) filter.category = req.query.categoryId;
+    const subcategories = await populateCategory(
+      Subcategory.find(filter).sort({ createdAt: -1, _id: -1 })
+    );
+    return res.status(200).json(subcategories);
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to fetch subcategories.", error: error.message });
+  }
+};
+
+export const createSubcategory = async (req, res) => {
+  try {
+    const { categoryId, name, slug, description = "" } = req.body;
+    if (!name?.trim()) return res.status(400).json({ message: "Subcategory name is required." });
+
+    const category = await Category.findOne({ _id: categoryId, type: "sparepart" });
+    if (!category) return res.status(400).json({ message: "Select a valid spare-parts category." });
+
+    const subcategorySlug = slugify(slug || name);
+    if (!subcategorySlug) {
+      return res.status(400).json({ message: "Subcategory name or slug must contain a letter or number." });
     }
 
-    let category;
-    if (categoryId) {
-      category = await Category.findOne({
-        _id: categoryId,
-        ...(req.body.type ? { type: req.body.type } : {}),
-      });
-    } else if (categorySlug) {
-      category = await Category.findOne({
-        slug: categorySlug,
-        ...(req.body.type ? { type: req.body.type } : {}),
-      });
-    }
-
-    if (!category) {
-      return res.status(404).json({ message: "Category not found." });
-    }
-
-    const subCategory = await SubCategory.create({
-      type: category.type,
+    const subcategory = await Subcategory.create({
       category: category._id,
       name: name.trim(),
-      slug: slugify(slug || name),
+      slug: subcategorySlug,
       description,
-      image: req.uploadedImageUrl || image,
-      images: req.uploadedImageUrls?.length ? req.uploadedImageUrls : image ? [image] : [],
-      imageName,
     });
-
-    const populated = await SubCategory.findById(subCategory._id).populate("category");
-    res.status(201).json(populated);
+    return res.status(201).json(await populateCategory(Subcategory.findById(subcategory._id)));
   } catch (error) {
-    res.status(error.code === 11000 ? 409 : 500).json({
-      message:
-        error.code === 11000
-          ? "Subcategory slug already exists."
-          : "Failed to create subcategory",
-      error: error.message,
-    });
+    if (error.code === 11000) return res.status(409).json({ message: "Subcategory slug already exists in this category." });
+    if (error.name === "ValidationError") return res.status(400).json({ message: "Subcategory details are invalid." });
+    console.error("Failed to create subcategory:", error);
+    return res.status(500).json({ message: "Failed to create subcategory." });
   }
 };
 
-// GET ALL SUBCATEGORIES
-export const getAllSubCategories = async (req, res) => {
+export const updateSubcategory = async (req, res) => {
   try {
-    const type = req.query.type;
-    if (type && !["sparepart", "machine"].includes(type)) {
-      return res.status(400).json({ message: "Type must be sparepart or machine." });
-    }
-    const subCategories = await SubCategory.find(type ? { type } : {})
-      .populate("category")
-      .sort({ createdAt: -1, _id: -1 });
+    const subcategory = await Subcategory.findById(req.params.id);
+    if (!subcategory) return res.status(404).json({ message: "Subcategory not found." });
 
-    res.status(200).json(subCategories);
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch subcategories",
-      error: error.message,
-    });
-  }
-};
-
-// GET SUBCATEGORIES FOR A CATEGORY
-export const getSubCategories = async (req, res) => {
-  try {
-    const { categorySlug } = req.params;
-
-    const categoryFilter = {
-      slug: categorySlug,
-      ...(req.query.type ? { type: req.query.type } : {}),
-    };
-    const category = await Category.findOne(categoryFilter);
-
-    if (!category) {
-      return res.status(404).json({
-        message: "Category not found",
-      });
+    const { categoryId, name, slug, description } = req.body;
+    if (categoryId && categoryId !== String(subcategory.category)) {
+      const productCount = await Product.countDocuments({ subcategory: subcategory._id });
+      if (productCount) {
+        return res.status(409).json({ message: "Move or unassign its spare parts before changing the parent category." });
+      }
+      const category = await Category.findOne({ _id: categoryId, type: "sparepart" });
+      if (!category) return res.status(400).json({ message: "Select a valid spare-parts category." });
+      subcategory.category = category._id;
     }
 
-    const subCategories = await SubCategory.find({
-      category: category._id,
-    })
-      .populate("category")
-      .sort({ createdAt: -1, _id: -1 });
-
-    res.status(200).json({
-      category,
-      subCategories,
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch subcategories",
-      error: error.message,
-    });
-  }
-};
-
-// GET PRODUCTS INSIDE SUBCATEGORY
-export const getProductsBySubCategory = async (req, res) => {
-  try {
-    const { categorySlug, subCategorySlug } = req.params;
-    if (req.query.type && !["sparepart", "machine"].includes(req.query.type)) {
-      return res.status(400).json({ message: "Type must be sparepart or machine." });
-    }
-
-    const category = await Category.findOne({
-      slug: categorySlug,
-      ...(req.query.type ? { type: req.query.type } : {}),
-    });
-
-    if (!category) {
-      return res.status(404).json({
-        message: "Category not found",
-      });
-    }
-
-    const subCategory = await SubCategory.findOne({
-      slug: subCategorySlug,
-      category: category._id,
-      type: category.type,
-    });
-
-    if (!subCategory) {
-      return res.status(404).json({
-        message: "Subcategory not found",
-      });
-    }
-
-    const products = await Product.find({
-      category: category._id,
-      subCategory: subCategory._id,
-      type: category.type,
-    }).sort({ createdAt: -1 });
-
-    res.status(200).json({
-      category,
-      subCategory,
-      products,
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch products",
-      error: error.message,
-    });
-  }
-};
-
-// UPDATE SUBCATEGORY
-export const updateSubCategory = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, slug, description, image, imageName, categoryId } = req.body;
-
-    const existingSubCategory = await SubCategory.findById(id);
-    if (!existingSubCategory) {
-      return res.status(404).json({ message: "Subcategory not found." });
-    }
-
-    const updateData = {};
     if (name !== undefined) {
-      if (!name.trim()) return res.status(400).json({ message: "Name is required." });
-      updateData.name = name.trim();
+      if (!name.trim()) return res.status(400).json({ message: "Subcategory name is required." });
+      subcategory.name = name.trim();
     }
     if (slug !== undefined || name !== undefined) {
-      const nextSlug = slugify(slug || name || existingSubCategory.name);
-      if (!nextSlug) return res.status(400).json({ message: "Name or slug must contain a letter or number." });
-      updateData.slug = nextSlug;
+      const nextSlug = slugify(slug || name || subcategory.name);
+      if (!nextSlug) return res.status(400).json({ message: "Subcategory slug must contain a letter or number." });
+      subcategory.slug = nextSlug;
     }
-    if (description !== undefined) updateData.description = description;
-    if (req.uploadedImageUrls?.length) {
-      updateData.image = req.uploadedImageUrls[0];
-      updateData.images = req.uploadedImageUrls;
-    } else if (req.uploadedImageUrl || image !== undefined) {
-      updateData.image = req.uploadedImageUrl || image;
-      updateData.images = updateData.image ? [updateData.image] : [];
-    }
-    if (imageName !== undefined) updateData.imageName = imageName;
-    if (categoryId) {
-      const category = await Category.findOne({ _id: categoryId, type: existingSubCategory.type });
-      if (!category) return res.status(404).json({ message: "Main category not found." });
-      updateData.category = category._id;
-    }
+    if (description !== undefined) subcategory.description = description;
 
-    const subCategory = await SubCategory.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    }).populate("category");
-
-    if (updateData.category) {
-      await Promise.all([
-        SubSubCategory.updateMany(
-          { subCategory: subCategory._id },
-          { $set: { category: subCategory.category._id, type: subCategory.type } }
-        ),
-        Product.updateMany(
-          { subCategory: subCategory._id },
-          { $set: { category: subCategory.category._id, type: subCategory.type } }
-        ),
-      ]);
-    }
-
-    res.status(200).json(subCategory);
+    await subcategory.save();
+    return res.status(200).json(await populateCategory(Subcategory.findById(subcategory._id)));
   } catch (error) {
-    if (error.code === 11000) {
-      return res.status(409).json({ message: "Subcategory slug already exists." });
-    }
-    if (error.name === "ValidationError") {
-      return res.status(400).json({ message: "Subcategory details are invalid." });
-    }
-    res.status(500).json({ message: "Failed to update subcategory", error: error.message });
+    if (error.code === 11000) return res.status(409).json({ message: "Subcategory slug already exists in this category." });
+    console.error("Failed to update subcategory:", error);
+    return res.status(500).json({ message: "Failed to update subcategory." });
   }
 };
 
-// DELETE SUBCATEGORY
-export const deleteSubCategory = async (req, res) => {
+export const deleteSubcategory = async (req, res) => {
   try {
-    const { id } = req.params;
-    const subCategory = await SubCategory.findByIdAndDelete(id);
-
-    if (!subCategory) {
-      return res.status(404).json({ message: "Subcategory not found" });
-    }
-
-    await Product.deleteMany({ subCategory: id });
-    await SubSubCategory.deleteMany({ subCategory: id });
-
-    res.status(200).json({ message: "Subcategory deleted successfully" });
+    const subcategory = await Subcategory.findByIdAndDelete(req.params.id);
+    if (!subcategory) return res.status(404).json({ message: "Subcategory not found." });
+    await Product.updateMany({ subcategory: subcategory._id }, { $set: { subcategory: null } });
+    return res.status(200).json({ message: "Subcategory deleted successfully." });
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to delete subcategory",
-      error: error.message,
-    });
+    console.error("Failed to delete subcategory:", error);
+    return res.status(500).json({ message: "Failed to delete subcategory." });
   }
 };

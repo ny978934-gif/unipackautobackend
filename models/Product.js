@@ -13,16 +13,9 @@ const productSchema = new mongoose.Schema(
       ref: "Category",
       required: true,
     },
-
-    subCategory: {
+    subcategory: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "SubCategory",
-      required: true,
-    },
-
-    subSubCategory: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "SubSubCategory",
+      ref: "Subcategory",
       default: null,
     },
 
@@ -46,6 +39,19 @@ const productSchema = new mongoose.Schema(
     price: {
       type: Number,
       default: 0,
+      min: 0,
+    },
+
+    stock: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    uom: {
+      type: String,
+      default: "",
+      trim: true,
     },
 
     image: {

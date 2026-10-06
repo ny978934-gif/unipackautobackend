@@ -6,13 +6,12 @@ import { fileURLToPath } from 'url';
 import connectDB from './config/db.js';
 import categoryRoutes from './routes/categoryRoutes.js';
 import contactRoutes from './routes/contact.js';
-import documentRoutes from './routes/documentRoutes.js';
 import productRoutes from './routes/productRoutes.js';
-import subCategoryRoutes from './routes/subCategoryRoutes.js';
-import subSubCategoryRoutes from './routes/subSubCategoryRoutes.js';
+import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
+import subcategoryRoutes from './routes/subcategoryRoutes.js';
 import Category from './models/Category.js';
-import SubCategory from './models/SubCategory.js';
 import Product from './models/Product.js';
+import Inquiry from './models/Inquiry.js';
 import { seedDatabase } from './seed.js';
 import backfillCatalogTypes from './migrations/backfillCatalogTypes.js';
 import { uploadsDirectory } from './config/uploads.js';
@@ -100,18 +99,20 @@ app.get('/api/health', (req, res) => {
 // Admin stats endpoint
 app.get('/api/stats', async (req, res) => {
   try {
-    const [categories, subcategories, products, inStock] = await Promise.all([
-      Category.countDocuments(),
-      SubCategory.countDocuments(),
-      Product.countDocuments(),
-      Product.countDocuments({ inStock: true }),
+    const [categories, products, inStock, inquiries, newInquiries] = await Promise.all([
+      Category.countDocuments({ type: 'sparepart' }),
+      Product.countDocuments({ type: 'sparepart' }),
+      Product.countDocuments({ type: 'sparepart', inStock: true }),
+      Inquiry.countDocuments(),
+      Inquiry.countDocuments({ status: 'new' }),
     ]);
 
     res.json({
       categories,
-      subcategories,
       products,
       inStock,
+      inquiries,
+      newInquiries,
     });
   } catch (error) {
     res.status(500).json({ message: 'Failed to fetch stats', error: error.message });
@@ -119,10 +120,9 @@ app.get('/api/stats', async (req, res) => {
 });
 
 app.use('/api/inquiries', contactRoutes);
-app.use('/api/documents', documentRoutes);
 app.use('/api/spare/categories', categoryRoutes);
-app.use('/api/subcategories', subCategoryRoutes);
-app.use('/api/sub-subcategories', subSubCategoryRoutes);
+app.use('/api/spare/subcategories', subcategoryRoutes);
+app.use('/api/spare-parts', sparePartImportRoutes);
 app.use('/api/products', productRoutes);
 
 // Compatibility alias for any spare parts requests
@@ -147,10 +147,8 @@ app.use((error, req, res, next) => {
   res.status(status).json({
     message:
       error.code === 'LIMIT_FILE_SIZE'
-        ? req.path.startsWith('/api/documents/')
-          ? 'Document is too large. Maximum allowed size is 10 MB.'
-          : 'Image file is too large. Maximum allowed size is 5 MB.'
-        : error.message || 'Internal server error',
+      ? 'Image file is too large. Maximum allowed size is 5 MB.'
+      : error.message || 'Internal server error',
   });
 });
 
