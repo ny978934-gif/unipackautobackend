@@ -8,7 +8,7 @@ import categoryRoutes from './routes/categoryRoutes.js';
 import contactRoutes from './routes/contact.js';
 import productRoutes from './routes/productRoutes.js';
 import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
-import subcategoryRoutes from './routes/subcategoryRoutes.js';
+// import subcategoryRoutes from './routes/subcategoryRoutes.js';
 import Category from './models/Category.js';
 import Product from './models/Product.js';
 import Inquiry from './models/Inquiry.js';
@@ -121,7 +121,7 @@ app.get('/api/stats', async (req, res) => {
 
 app.use('/api/inquiries', contactRoutes);
 app.use('/api/spare/categories', categoryRoutes);
-app.use('/api/spare/subcategories', subcategoryRoutes);
+// app.use('/api/spare/subcategories', subcategoryRoutes);
 app.use('/api/spare-parts', sparePartImportRoutes);
 app.use('/api/products', productRoutes);
 
