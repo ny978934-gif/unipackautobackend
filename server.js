@@ -91,14 +91,13 @@ app.get('/api/health', (req, res) => {
 // Admin stats
 app.get('/api/stats', async (req, res) => {
   try {
-    const [categories, products, inStock, inquiries, newInquiries] = await Promise.all([
+    const [categories, products, inquiries, newInquiries] = await Promise.all([
       Category.countDocuments({ type: 'sparepart' }),
       Product.countDocuments({ type: 'sparepart' }),
-      Product.countDocuments({ type: 'sparepart', inStock: true }),
       Inquiry.countDocuments(),
       Inquiry.countDocuments({ status: 'new' }),
     ]);
-    res.json({ categories, products, inStock, inquiries, newInquiries });
+    res.json({ categories, products, inquiries, newInquiries });
   } catch (error) {
     res.status(500).json({ message: 'Failed to fetch stats', error: error.message });
   }
