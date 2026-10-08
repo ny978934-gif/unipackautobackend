@@ -50,12 +50,20 @@ const mapRecord = (record) => Object.entries(record).reduce((mapped, [key, value
   return mapped;
 }, {});
 
-export const parseExcel = (buffer) => {
+export const parseExcel = (buffer, categoryName) => {
   const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
-  return workbook.SheetNames.flatMap((sheetName) => {
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "", raw: false });
-    return rows.map(mapRecord).filter((record) => Object.values(record).some(Boolean));
-  });
+  const normalizedCategoryName = normalizeHeader(categoryName);
+  const matchingSheet = workbook.SheetNames.find(
+    (sheetName) => normalizeHeader(sheetName) === normalizedCategoryName
+  );
+  if (!matchingSheet) {
+    const error = new Error(`No worksheet matches the selected category "${categoryName}".`);
+    error.status = 422;
+    throw error;
+  }
+
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[matchingSheet], { defval: "", raw: false });
+  return rows.map(mapRecord).filter((record) => Object.values(record).some(Boolean));
 };
 
 export const parseWordText = (text) => {
@@ -143,7 +151,7 @@ router.post("/upload-parse", upload.single("file"), async (req, res) => {
     let parsedRecords;
     try {
       parsedRecords = ["xls", "xlsx"].includes(extension)
-        ? parseExcel(req.file.buffer)
+        ? parseExcel(req.file.buffer, category.name)
         : await parseWord(req.file.buffer, extension);
     } catch (error) {
       error.status = 422;

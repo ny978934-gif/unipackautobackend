@@ -3,22 +3,56 @@ import test from "node:test";
 import XLSX from "xlsx";
 import { parseExcel, parseWordText } from "../routes/sparePartImportRoutes.js";
 
-test("maps Excel headers and rows into spare part fields", () => {
+test("maps the selected category's matching Excel sheet into spare part fields", () => {
   const worksheet = XLSX.utils.aoa_to_sheet([
     ["Part Name", "Part Code", "Price", "Stock Qty", "U.O.M."],
     ["Heating Element", "HE-22", 1250, 8, "piece"],
   ]);
+  const otherWorksheet = XLSX.utils.aoa_to_sheet([
+    ["Part Name", "Price", "Stock", "UOM"],
+    ["Unrelated part", 99, 1, "piece"],
+  ]);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Spare Parts");
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Heating Elements");
+  XLSX.utils.book_append_sheet(workbook, otherWorksheet, "Other Category");
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
 
-  assert.deepEqual(parseExcel(buffer), [{
+  assert.deepEqual(parseExcel(buffer, "Heating Elements"), [{
     name: "Heating Element",
     partCode: "HE-22",
     price: "1250",
     stock: "8",
     uom: "piece",
   }]);
+});
+
+test("matches Excel sheets without case or punctuation differences", () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["Part Name", "Price"], ["Roller", 100]]),
+    "Hydraulic_Pump Parts"
+  );
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+  assert.deepEqual(parseExcel(buffer, "hydraulic pump parts"), [
+    { name: "Roller", price: "100" },
+  ]);
+});
+
+test("rejects Excel files without a sheet matching the selected category", () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["Part Name"], ["Roller"]]),
+    "Spare Parts"
+  );
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+  assert.throws(() => parseExcel(buffer, "Hydraulic Pump"), {
+    message: 'No worksheet matches the selected category "Hydraulic Pump".',
+    status: 422,
+  });
 });
 
 test("parses Word tables with field headings", () => {
