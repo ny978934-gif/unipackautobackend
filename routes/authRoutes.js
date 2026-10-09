@@ -1,5 +1,4 @@
 import express from "express";
-import { timingSafeEqual } from "node:crypto";
 import Admin from "../models/Admin.js";
 import {
   createAdminToken,
@@ -37,19 +36,17 @@ const recordFailedAttempt = (key) => {
   });
 };
 
-const matchesSetupKey = (providedKey) => {
-  const configuredKey = process.env.ADMIN_SETUP_KEY;
-  if (!configuredKey || Buffer.byteLength(configuredKey) < 32 || !providedKey) return false;
-  const expected = Buffer.from(configuredKey);
-  const provided = Buffer.from(providedKey);
-  return expected.length === provided.length && timingSafeEqual(expected, provided);
+const configuredAdminEmail = () => {
+  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  return email && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    ? email
+    : "";
 };
 
 router.get("/setup-status", async (_req, res, next) => {
   try {
     res.json({
-      available: Boolean(process.env.ADMIN_SETUP_KEY && Buffer.byteLength(process.env.ADMIN_SETUP_KEY) >= 32) &&
-        !(await Admin.exists({})),
+      available: Boolean(configuredAdminEmail()) && !(await Admin.exists({})),
     });
   } catch (error) {
     next(error);
@@ -65,11 +62,10 @@ router.post("/setup", rateLimitLogin, async (req, res, next) => {
     const confirmation = typeof req.body?.passwordConfirmation === "string"
       ? req.body.passwordConfirmation
       : "";
-    const setupKey = typeof req.body?.setupKey === "string" ? req.body.setupKey : "";
-
-    if (!matchesSetupKey(setupKey)) {
+    const allowedEmail = configuredAdminEmail();
+    if (!allowedEmail || email !== allowedEmail) {
       recordFailedAttempt(req.loginRateLimitKey);
-      return res.status(403).json({ message: "The first-admin setup key is invalid or not configured." });
+      return res.status(403).json({ message: "This email is not authorized for initial admin setup." });
     }
     if (await Admin.exists({})) {
       return res.status(403).json({ message: "Initial admin setup is already complete." });
@@ -83,7 +79,7 @@ router.post("/setup", rateLimitLogin, async (req, res, next) => {
       password !== confirmation
     ) {
       return res.status(400).json({
-        message: "Provide a valid email, matching passwords of at least 12 characters, and the setup key.",
+        message: "Provide the authorized email and matching passwords of at least 12 characters.",
       });
     }
 
