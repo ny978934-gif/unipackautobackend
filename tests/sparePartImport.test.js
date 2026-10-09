@@ -3,7 +3,7 @@ import test from "node:test";
 import XLSX from "xlsx";
 import { parseExcel, parseWordText } from "../routes/sparePartImportRoutes.js";
 
-test("maps the selected category's matching Excel sheet into spare part fields", () => {
+test("finds a spare-part table regardless of worksheet name", () => {
   const worksheet = XLSX.utils.aoa_to_sheet([
     ["Part Name", "Part Code", "Price", "Stock Qty", "U.O.M."],
     ["Heating Element", "HE-22", 1250, 8, "piece"],
@@ -17,7 +17,7 @@ test("maps the selected category's matching Excel sheet into spare part fields",
   XLSX.utils.book_append_sheet(workbook, otherWorksheet, "Other Category");
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
 
-  assert.deepEqual(parseExcel(buffer, "Heating Elements"), [{
+  assert.deepEqual(parseExcel(buffer), [{
     name: "Heating Element",
     partCode: "HE-22",
     price: "1250",
@@ -26,31 +26,77 @@ test("maps the selected category's matching Excel sheet into spare part fields",
   }]);
 });
 
-test("matches Excel sheets without case or punctuation differences", () => {
+test("detects case-insensitive headers with extra spaces", () => {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     workbook,
-    XLSX.utils.aoa_to_sheet([["Part Name", "Price"], ["Roller", 100]]),
-    "Hydraulic_Pump Parts"
+    XLSX.utils.aoa_to_sheet([
+      ["Inventory export"],
+      ["  pArT   nAmE  ", "  pRiCe  ", " U O M "],
+      ["Roller", 100, "piece"],
+    ]),
+    "Unrelated Worksheet"
   );
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
 
-  assert.deepEqual(parseExcel(buffer, "hydraulic pump parts"), [
-    { name: "Roller", price: "100" },
+  assert.deepEqual(parseExcel(buffer), [
+    { name: "Roller", price: "100", uom: "piece" },
   ]);
 });
 
-test("rejects Excel files without a sheet matching the selected category", () => {
+test("chooses the matching sheet with the most recognized columns, then data rows", () => {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     workbook,
-    XLSX.utils.aoa_to_sheet([["Part Name"], ["Roller"]]),
+    XLSX.utils.aoa_to_sheet([["Part Name", "Price"], ["Less complete", 10], ["Also less complete", 20]]),
+    "Selected category is not here"
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([
+      ["Part Name", "Price", "UOM"],
+      ["Most complete", 30, "piece"],
+    ]),
+    "Completely different name"
+  );
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+  assert.deepEqual(parseExcel(buffer), [
+    { name: "Most complete", price: "30", uom: "piece" },
+  ]);
+});
+
+test("uses the matching sheet with the most data rows when recognized columns tie", () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["Part Name", "Price"], ["One row", 10]]),
+    "First"
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["Part Name", "Price"], ["Row one", 10], ["Row two", 20]]),
+    "Second"
+  );
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+  assert.deepEqual(parseExcel(buffer), [
+    { name: "Row one", price: "10" },
+    { name: "Row two", price: "20" },
+  ]);
+});
+
+test("rejects Excel files without a valid part-name table and data row", () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([["Part Name"], [""]]),
     "Spare Parts"
   );
   const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
 
-  assert.throws(() => parseExcel(buffer, "Hydraulic Pump"), {
-    message: 'No worksheet matches the selected category "Hydraulic Pump".',
+  assert.throws(() => parseExcel(buffer), {
+    message: "No spare-part table found. Please include a Part Name column and at least one data row.",
     status: 422,
   });
 });

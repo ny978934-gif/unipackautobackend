@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import Inquiry from '../models/Inquiry.js';
+import { requireAdmin } from '../middleware/adminAuth.js';
 
 const router = Router();
 
@@ -50,7 +51,7 @@ router.post("/", async (req, res) => {
 });
 
 // GET /api/inquiries — list inquiries (for an admin view, if you build one later)
-router.get("/", async (req, res) => {
+router.get("/", requireAdmin, async (req, res) => {
   try {
     const inquiries = await Inquiry.find().sort({ createdAt: -1 });
     res.json(inquiries);

@@ -9,6 +9,8 @@ import contactRoutes from './routes/contact.js';
 import productRoutes from './routes/productRoutes.js';
 import subcategoryRoutes from './routes/subcategoryRoutes.js';
 import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
+import authRoutes from './routes/authRoutes.js';
+import { requireAdmin } from './middleware/adminAuth.js';
 import Category from './models/Category.js';
 import Product from './models/Product.js';
 import Inquiry from './models/Inquiry.js';
@@ -88,8 +90,10 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', database: 'configured' });
 });
 
+app.use('/api/auth', authRoutes);
+
 // Admin stats
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', requireAdmin, async (req, res) => {
   try {
     const [categories, products, inquiries, newInquiries] = await Promise.all([
       Category.countDocuments({ type: 'sparepart' }),

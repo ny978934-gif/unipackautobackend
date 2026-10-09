@@ -6,6 +6,7 @@ import WordExtractor from "word-extractor";
 import XLSX from "xlsx";
 import Category from "../models/Category.js";
 import Product from "../models/Product.js";
+import { requireAdmin } from "../middleware/adminAuth.js";
 
 const router = express.Router();
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -50,20 +51,47 @@ const mapRecord = (record) => Object.entries(record).reduce((mapped, [key, value
   return mapped;
 }, {});
 
-export const parseExcel = (buffer, categoryName) => {
+export const parseExcel = (buffer) => {
   const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
-  const normalizedCategoryName = normalizeHeader(categoryName);
-  const matchingSheet = workbook.SheetNames.find(
-    (sheetName) => normalizeHeader(sheetName) === normalizedCategoryName
-  );
-  if (!matchingSheet) {
-    const error = new Error(`No worksheet matches the selected category "${categoryName}".`);
+  const candidates = workbook.SheetNames.flatMap((sheetName) => {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      header: 1,
+      defval: "",
+      raw: false,
+    });
+    return rows.flatMap((headerRow, headerIndex) => {
+      const columns = headerRow.reduce((recognized, header, columnIndex) => {
+        const field = headerFor(header);
+        if (field && !recognized.has(field)) recognized.set(field, columnIndex);
+        return recognized;
+      }, new Map());
+      if (!columns.has("name")) return [];
+
+      const records = rows.slice(headerIndex + 1).map((row) => {
+        const record = {};
+        for (const [field, columnIndex] of columns) {
+          const value = row[columnIndex];
+          if (value !== undefined && value !== null) record[field] = String(value).trim();
+        }
+        return record;
+      }).filter((record) => record.name);
+
+      return records.length
+        ? [{ recognizedColumnCount: columns.size, records }]
+        : [];
+    });
+  });
+  if (!candidates.length) {
+    const error = new Error("No spare-part table found. Please include a Part Name column and at least one data row.");
     error.status = 422;
     throw error;
   }
 
-  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[matchingSheet], { defval: "", raw: false });
-  return rows.map(mapRecord).filter((record) => Object.values(record).some(Boolean));
+  candidates.sort((left, right) =>
+    right.recognizedColumnCount - left.recognizedColumnCount ||
+    right.records.length - left.records.length
+  );
+  return candidates[0].records;
 };
 
 export const parseWordText = (text) => {
@@ -131,7 +159,7 @@ const parseStock = (value, rowNumber) => {
 const slugify = (value) =>
   value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "spare-part";
 
-router.post("/upload-parse", upload.single("file"), async (req, res) => {
+router.post("/upload-parse", requireAdmin, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: "Choose a Word (.doc, .docx) or Excel (.xls, .xlsx) file." });
@@ -151,7 +179,7 @@ router.post("/upload-parse", upload.single("file"), async (req, res) => {
     let parsedRecords;
     try {
       parsedRecords = ["xls", "xlsx"].includes(extension)
-        ? parseExcel(req.file.buffer, category.name)
+        ? parseExcel(req.file.buffer)
         : await parseWord(req.file.buffer, extension);
     } catch (error) {
       error.status = 422;
