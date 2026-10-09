@@ -65,7 +65,10 @@ router.post("/setup", rateLimitLogin, async (req, res, next) => {
     const allowedEmail = configuredAdminEmail();
     if (!allowedEmail || email !== allowedEmail) {
       recordFailedAttempt(req.loginRateLimitKey);
-      return res.status(403).json({ message: "This email is not authorized for initial admin setup." });
+      return res.status(403).json({
+        message:
+          "Initial admin setup is restricted to the email configured in ADMIN_EMAIL on the backend. Set ADMIN_EMAIL to this address in Render, restart the service, and try again.",
+      });
     }
     if (await Admin.exists({})) {
       return res.status(403).json({ message: "Initial admin setup is already complete." });
