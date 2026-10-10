@@ -9,7 +9,6 @@ import cloudinary, { isConfigured } from "../config/cloudinary.js";
 import { uploadsDirectory } from "../config/uploads.js";
 import {
   describeEmailFailure,
-  sendQuoteEmailTest,
   sendQuoteNotification,
 } from "../services/quoteNotification.js";
 
@@ -217,27 +216,6 @@ router.post("/", parseAttachment, async (req, res) => {
     if (error.status) return res.status(error.status).json({ message: error.message });
     console.error("Error creating quote request:", error);
     return res.status(500).json({ message: "Your quote request could not be saved. Please try again." });
-  }
-});
-
-router.post("/email-check", requireAdmin, async (_req, res) => {
-  try {
-    const result = await sendQuoteEmailTest();
-    return res.json({
-      ok: true,
-      message: `SMTP accepted a test email for ${result.recipient} (Message-ID: ${result.messageId || "not provided"}). This confirms the configured server accepted it, not that Gmail placed it in Inbox. Check Gmail Sent, All Mail, Spam, and filters.`,
-      messageId: result.messageId,
-      accepted: result.accepted,
-    });
-  } catch (error) {
-    const message = describeEmailFailure(error);
-    console.error("Gmail SMTP check failed:", {
-      code: error.code || "UNKNOWN",
-      responseCode: error.responseCode || null,
-      message: error.message,
-      guidance: message,
-    });
-    return res.status(503).json({ ok: false, message });
   }
 });
 
