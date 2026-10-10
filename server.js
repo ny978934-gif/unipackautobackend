@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import connectDB from './config/db.js';
 import categoryRoutes from './routes/categoryRoutes.js';
 import contactRoutes from './routes/contact.js';
+import quoteRoutes from './routes/quoteRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import subcategoryRoutes from './routes/subcategoryRoutes.js';
 import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
@@ -14,6 +15,7 @@ import { requireAdmin } from './middleware/adminAuth.js';
 import Category from './models/Category.js';
 import Product from './models/Product.js';
 import Inquiry from './models/Inquiry.js';
+import QuoteRequest from './models/QuoteRequest.js';
 import { seedDatabase } from './seed.js';
 import backfillCatalogTypes from './migrations/backfillCatalogTypes.js';
 import { uploadsDirectory } from './config/uploads.js';
@@ -95,19 +97,22 @@ app.use('/api/auth', authRoutes);
 // Admin stats
 app.get('/api/stats', requireAdmin, async (req, res) => {
   try {
-    const [categories, products, inquiries, newInquiries] = await Promise.all([
+    const [categories, products, inquiries, newInquiries, quoteRequests, newQuoteRequests] = await Promise.all([
       Category.countDocuments({ type: 'sparepart' }),
       Product.countDocuments({ type: 'sparepart' }),
       Inquiry.countDocuments(),
       Inquiry.countDocuments({ status: 'new' }),
+      QuoteRequest.countDocuments(),
+      QuoteRequest.countDocuments({ status: 'new' }),
     ]);
-    res.json({ categories, products, inquiries, newInquiries });
+    res.json({ categories, products, inquiries, newInquiries, quoteRequests, newQuoteRequests });
   } catch (error) {
     res.status(500).json({ message: 'Failed to fetch stats', error: error.message });
   }
 });
 
 app.use('/api/inquiries', contactRoutes);
+app.use('/api/quotes', quoteRoutes);
 app.use('/api/spare/categories', categoryRoutes);
 app.use('/api/subcategories', subcategoryRoutes);
 app.use('/api/spare-parts', sparePartImportRoutes);

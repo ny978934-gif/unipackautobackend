@@ -4,7 +4,7 @@
 		{
 			"label": "Check server syntax",
 			"type": "shell",
-			"command": "node --check server.js && node --check middleware/cloudinaryUpload.js && node --check controllers/productController.js && node --check controllers/categoryController.js",
+			"command": "node --check server.js && node --check routes/quoteRoutes.js && node --check models/QuoteRequest.js && node --check services/quoteNotification.js && node --check middleware/cloudinaryUpload.js && node --check controllers/productController.js && node --check controllers/categoryController.js",
 			"isBackground": false,
 			"problemMatcher": []
 		}
