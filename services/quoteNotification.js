@@ -6,8 +6,8 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * Build a nodemailer transport config from environment variables.
  *
  * Priority:
- *   1. SMTP_HOST  → use generic SMTP (supports Gmail, Outlook, any SMTP server)
- *   2. GMAIL_USER → use Gmail shorthand (kept for backward compat)
+ *   1. GMAIL_USER → use Gmail with its App Password when configured
+ *   2. SMTP_HOST  → use generic SMTP when Gmail credentials are not configured
  *
  * Required env vars for SMTP:
  *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM, ADMIN_EMAIL
@@ -17,8 +17,33 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 export const getEmailConfiguration = (env = process.env) => {
   const adminEmail = env.ADMIN_EMAIL?.trim();
+  const gmailUser = env.GMAIL_USER?.trim();
+  const gmailPassword = env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
 
-  // ── 1. SMTP path (highest priority) ────────────────────────────────────────
+  // Prefer Gmail explicitly configured with an App Password over any stale SMTP settings.
+  if (gmailUser || gmailPassword) {
+    if (!gmailUser || !gmailPassword) {
+      throw new Error(
+        "GMAIL_USER and GMAIL_APP_PASSWORD must both be set to use the Gmail shorthand."
+      );
+    }
+    if (!emailPattern.test(gmailUser)) {
+      throw new Error("GMAIL_USER must be a valid Gmail address.");
+    }
+    if (!adminEmail || !emailPattern.test(adminEmail)) {
+      throw new Error("ADMIN_EMAIL must be a valid email address.");
+    }
+    if (gmailUser.toLowerCase() !== adminEmail.toLowerCase()) {
+      throw new Error("GMAIL_USER and ADMIN_EMAIL must be the same address for Gmail notifications.");
+    }
+    return {
+      transport: { service: "gmail", auth: { user: gmailUser, pass: gmailPassword } },
+      from: gmailUser,
+      to: gmailUser,
+    };
+  }
+
+  // Use generic SMTP only if Gmail App Password credentials are absent.
   if (env.SMTP_HOST?.trim()) {
     const host   = env.SMTP_HOST.trim();
     const port   = Number(env.SMTP_PORT || 587);
@@ -52,31 +77,7 @@ export const getEmailConfiguration = (env = process.env) => {
     };
   }
 
-  // ── 2. Gmail shorthand path ─────────────────────────────────────────────────
-  const gmailUser     = env.GMAIL_USER?.trim();
-  const gmailPassword = env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
-
-  if (gmailUser || gmailPassword) {
-    if (!gmailUser || !gmailPassword) {
-      throw new Error(
-        "GMAIL_USER and GMAIL_APP_PASSWORD must both be set to use the Gmail shorthand."
-      );
-    }
-    if (!emailPattern.test(gmailUser)) {
-      throw new Error("GMAIL_USER must be a valid Gmail address.");
-    }
-    const to = adminEmail || gmailUser;
-    if (!emailPattern.test(to)) {
-      throw new Error("ADMIN_EMAIL must be a valid email address.");
-    }
-    return {
-      transport: { service: "gmail", auth: { user: gmailUser, pass: gmailPassword } },
-      from: gmailUser,
-      to,
-    };
-  }
-
-  // ── 3. Nothing configured ───────────────────────────────────────────────────
+  // Nothing configured.
   throw new Error(
     "Email is not configured. Add SMTP_HOST, SMTP_USER, SMTP_PASS, EMAIL_FROM, and ADMIN_EMAIL to the server .env file."
   );
@@ -151,6 +152,38 @@ export async function verifyQuoteEmail() {
   return { recipient: config.to };
 }
 
+export async function sendQuoteEmailTest() {
+  const { config, transporter } = buildTransporter();
+  const info = await transporter.sendMail({
+    from: `"UnipackAuto Email Test" <${config.from}>`,
+    to: config.to,
+    subject: "UnipackAuto quote email delivery test",
+    text: [
+      "This is a test email from the UnipackAuto quote notification service.",
+      `Recipient: ${config.to}`,
+      "If you can read this, the SMTP server accepted the message.",
+      "SMTP acceptance does not guarantee Inbox placement; check Spam, All Mail, filters, and the Sent folder.",
+    ].join("\n"),
+  });
+  const accepted = (info.accepted || []).map((recipient) =>
+    typeof recipient === "string" ? recipient : recipient.address
+  );
+  const recipientAccepted = accepted.some(
+    (recipient) => recipient?.toLowerCase() === config.to.toLowerCase()
+  );
+  if (!recipientAccepted) {
+    const error = new Error("SMTP did not accept the configured notification recipient.");
+    error.code = "RECIPIENT_NOT_ACCEPTED";
+    throw error;
+  }
+  return {
+    recipient: config.to,
+    messageId: info.messageId,
+    response: info.response,
+    accepted,
+  };
+}
+
 /**
  * Send a new-quote-request notification email to the admin.
  */
@@ -181,11 +214,24 @@ export async function sendQuoteNotification(quote) {
     "Reply to this email to respond directly to the customer.",
   ].join("\n");
 
-  await transporter.sendMail({
+  const info = await transporter.sendMail({
     from: `"UnipackAuto Enquiries" <${config.from}>`,
     to: config.to,
     replyTo: quote.email,
     subject,
     text: body,
   });
+  const accepted = (info.accepted || []).map((recipient) =>
+    typeof recipient === "string" ? recipient : recipient.address
+  );
+  if (!accepted.some((recipient) => recipient?.toLowerCase() === config.to.toLowerCase())) {
+    const error = new Error("SMTP did not accept the configured quote notification recipient.");
+    error.code = "RECIPIENT_NOT_ACCEPTED";
+    throw error;
+  }
+  return {
+    messageId: info.messageId,
+    response: info.response,
+    accepted,
+  };
 }

@@ -10,6 +10,9 @@ test("configures Gmail notifications and removes spaces from grouped app passwor
     GMAIL_USER: "quotes@unipackauto.in",
     GMAIL_APP_PASSWORD: "abcd efgh ijkl mnop",
     ADMIN_EMAIL: "quotes@unipackauto.in",
+    SMTP_HOST: "smtp.old-provider.example",
+    SMTP_USER: "old-sender@example.com",
+    SMTP_PASS: "old-password",
   });
 
   assert.deepEqual(config.transport, {

@@ -9,8 +9,8 @@ import cloudinary, { isConfigured } from "../config/cloudinary.js";
 import { uploadsDirectory } from "../config/uploads.js";
 import {
   describeEmailFailure,
+  sendQuoteEmailTest,
   sendQuoteNotification,
-  verifyQuoteEmail,
 } from "../services/quoteNotification.js";
 
 const router = Router();
@@ -188,9 +188,14 @@ router.post("/", parseAttachment, async (req, res) => {
 
     let notificationSent = true;
     try {
-      await sendQuoteNotification(savedQuote);
+      const emailInfo = await sendQuoteNotification(savedQuote);
       savedQuote.notificationStatus = "sent";
       savedQuote.notificationError = "";
+      console.info(`Quote notification accepted by SMTP for ${savedQuote.id}:`, {
+        messageId: emailInfo.messageId,
+        accepted: emailInfo.accepted,
+        response: emailInfo.response,
+      });
     } catch (error) {
       notificationSent = false;
       savedQuote.notificationStatus = "failed";
@@ -217,10 +222,12 @@ router.post("/", parseAttachment, async (req, res) => {
 
 router.post("/email-check", requireAdmin, async (_req, res) => {
   try {
-    const result = await verifyQuoteEmail();
+    const result = await sendQuoteEmailTest();
     return res.json({
       ok: true,
-      message: `Gmail SMTP authentication succeeded. Notifications will be sent to ${result.recipient}.`,
+      message: `SMTP accepted a test email for ${result.recipient} (Message-ID: ${result.messageId || "not provided"}). This confirms the configured server accepted it, not that Gmail placed it in Inbox. Check Gmail Sent, All Mail, Spam, and filters.`,
+      messageId: result.messageId,
+      accepted: result.accepted,
     });
   } catch (error) {
     const message = describeEmailFailure(error);
