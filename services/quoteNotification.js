@@ -2,140 +2,190 @@ import nodemailer from "nodemailer";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * Build a nodemailer transport config from environment variables.
+ *
+ * Priority:
+ *   1. SMTP_HOST  → use generic SMTP (supports Gmail, Outlook, any SMTP server)
+ *   2. GMAIL_USER → use Gmail shorthand (kept for backward compat)
+ *
+ * Required env vars for SMTP:
+ *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM, ADMIN_EMAIL
+ *
+ * Required env vars for Gmail shorthand:
+ *   GMAIL_USER, GMAIL_APP_PASSWORD, ADMIN_EMAIL
+ */
 export const getEmailConfiguration = (env = process.env) => {
-  const gmailUser = env.GMAIL_USER?.trim();
-  const gmailAppPassword = env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
-  const to = env.ADMIN_EMAIL?.trim();
+  const adminEmail = env.ADMIN_EMAIL?.trim();
 
-  if (Boolean(gmailUser) !== Boolean(gmailAppPassword)) {
-    throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD must both be configured to use Gmail.");
-  }
+  // ── 1. SMTP path (highest priority) ────────────────────────────────────────
+  if (env.SMTP_HOST?.trim()) {
+    const host   = env.SMTP_HOST.trim();
+    const port   = Number(env.SMTP_PORT || 587);
+    const secure = String(env.SMTP_SECURE || "").toLowerCase() === "true";
+    const user   = env.SMTP_USER?.trim();
+    const pass   = env.SMTP_PASS?.trim();
+    const from   = env.EMAIL_FROM?.trim() || user;
 
-  if (gmailUser && gmailAppPassword) {
-    if (!to || !emailPattern.test(gmailUser) || !emailPattern.test(to)) {
-      throw new Error("Set GMAIL_USER and ADMIN_EMAIL to valid email addresses.");
+    if (!adminEmail || !emailPattern.test(adminEmail)) {
+      throw new Error("ADMIN_EMAIL must be a valid email address.");
     }
-    if (gmailUser.toLowerCase() !== to.toLowerCase()) {
-      throw new Error("GMAIL_USER and ADMIN_EMAIL must be the same Gmail address.");
+    if (!from || !emailPattern.test(from)) {
+      throw new Error("EMAIL_FROM must be a valid email address.");
     }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error("SMTP_PORT must be a number between 1 and 65,535.");
+    }
+    if (Boolean(user) !== Boolean(pass)) {
+      throw new Error("SMTP_USER and SMTP_PASS must both be set (or both left empty).");
+    }
+
     return {
       transport: {
-        service: "gmail",
-        auth: { user: gmailUser, pass: gmailAppPassword },
+        host,
+        port,
+        secure,
+        ...(user && pass ? { auth: { user, pass } } : {}),
       },
-      to: gmailUser,
-      from: gmailUser,
+      from,
+      to: adminEmail,
     };
   }
 
-  const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS } = env;
-  const from = env.EMAIL_FROM?.trim() || SMTP_USER?.trim();
-  if (!SMTP_HOST || !to || !from) {
-    throw new Error(
-      "Email notification is not configured. Set GMAIL_USER, GMAIL_APP_PASSWORD, ADMIN_EMAIL or configure SMTP_HOST, ADMIN_EMAIL, and EMAIL_FROM."
-    );
+  // ── 2. Gmail shorthand path ─────────────────────────────────────────────────
+  const gmailUser     = env.GMAIL_USER?.trim();
+  const gmailPassword = env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
+
+  if (gmailUser || gmailPassword) {
+    if (!gmailUser || !gmailPassword) {
+      throw new Error(
+        "GMAIL_USER and GMAIL_APP_PASSWORD must both be set to use the Gmail shorthand."
+      );
+    }
+    if (!emailPattern.test(gmailUser)) {
+      throw new Error("GMAIL_USER must be a valid Gmail address.");
+    }
+    const to = adminEmail || gmailUser;
+    if (!emailPattern.test(to)) {
+      throw new Error("ADMIN_EMAIL must be a valid email address.");
+    }
+    return {
+      transport: { service: "gmail", auth: { user: gmailUser, pass: gmailPassword } },
+      from: gmailUser,
+      to,
+    };
   }
-  if (Boolean(SMTP_USER) !== Boolean(SMTP_PASS)) {
-    throw new Error("SMTP_USER and SMTP_PASS must either both be configured or both be empty.");
-  }
-  const port = Number(SMTP_PORT || 587);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("SMTP_PORT must be a number between 1 and 65,535.");
-  }
-  if (!emailPattern.test(to) || !emailPattern.test(from)) {
-    throw new Error("ADMIN_EMAIL and EMAIL_FROM must be valid email addresses.");
-  }
-  return {
-    transport: {
-      host: SMTP_HOST,
-      port,
-      secure: String(SMTP_SECURE || "").toLowerCase() === "true",
-      auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-    },
-    to,
-    from,
-  };
+
+  // ── 3. Nothing configured ───────────────────────────────────────────────────
+  throw new Error(
+    "Email is not configured. Add SMTP_HOST, SMTP_USER, SMTP_PASS, EMAIL_FROM, and ADMIN_EMAIL to the server .env file."
+  );
 };
 
+/**
+ * Translate nodemailer / network errors into human-readable guidance.
+ */
 export const describeEmailFailure = (error) => {
   const code = String(error?.code || "").toUpperCase();
   const responseCode = Number(error?.responseCode || 0);
 
   if (code === "EAUTH" || responseCode === 535 || responseCode === 534) {
-    return "Gmail rejected authentication. Confirm GMAIL_USER is the sending Gmail address, 2-Step Verification is enabled, and GMAIL_APP_PASSWORD is a current 16-character App Password (not your Gmail password).";
+    return (
+      "Gmail rejected the password. Make sure SMTP_PASS (or GMAIL_APP_PASSWORD) is a " +
+      "16-character App Password — not your Gmail login password. " +
+      "Generate one at: myaccount.google.com → Security → 2-Step Verification → App passwords."
+    );
   }
   if (code === "ETIMEDOUT" || code === "ESOCKET" || code === "ECONNECTION" || code === "ECONNREFUSED") {
-    return "The server could not connect to Gmail SMTP. Check VPS outbound SMTP access and DNS/firewall rules; Gmail SMTP uses port 465 (TLS) or 587 (STARTTLS).";
+    return (
+      "Could not connect to the SMTP server. " +
+      "For Gmail use port 465 with SMTP_SECURE=true, or port 587 with SMTP_SECURE=false. " +
+      "Check that outbound SMTP is not blocked by your host or firewall."
+    );
   }
   if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
-    return "The server could not resolve Gmail SMTP. Check the VPS DNS configuration and internet access.";
+    return (
+      "Could not resolve the SMTP hostname. " +
+      "Check SMTP_HOST is correct (smtp.gmail.com for Gmail) and the server has internet/DNS access."
+    );
   }
-  if (error instanceof Error && error.message.startsWith("Email notification is not configured.")) {
-    return "Gmail settings are missing. Set GMAIL_USER, GMAIL_APP_PASSWORD, and ADMIN_EMAIL in the backend .env, then restart PM2 with --update-env.";
+  if (error?.message?.includes("not configured") || error?.message?.includes("must both be set")) {
+    return `Email setup is incomplete: ${error.message}`;
   }
-  if (error instanceof Error && error.message.startsWith("GMAIL_USER and GMAIL_APP_PASSWORD")) {
-    return "Gmail settings are incomplete. Set both GMAIL_USER and GMAIL_APP_PASSWORD in the backend .env, then restart PM2 with --update-env.";
-  }
-  return "Email delivery failed. Use the admin email setup test and check PM2 logs for the provider error.";
+  return `Email delivery failed (${code || "unknown error"}): ${error?.message || "check server logs for details"}.`;
 };
 
-const createQuoteTransporter = () => {
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+const buildTransporter = () => {
   const config = getEmailConfiguration();
-  return {
-    config,
-    transporter: nodemailer.createTransport(config.transport),
-  };
+  return { config, transporter: nodemailer.createTransport(config.transport) };
 };
-
-export async function verifyQuoteEmail() {
-  const { config, transporter } = createQuoteTransporter();
-  await transporter.verify();
-  return { recipient: config.to };
-}
 
 const getQuoteSummary = (quote) => {
   if (quote.quoteType === "machine") {
     return [
-      `Machine type: ${quote.machineType}`,
-      `Model: ${quote.model}`,
-      `Quantity: ${quote.quantity}`,
+      `Machine type : ${quote.machineType}`,
+      `Model        : ${quote.model}`,
+      `Quantity     : ${quote.quantity}`,
       `Specifications: ${quote.specifications || "Not provided"}`,
     ].join("\n");
   }
-  return quote.parts.map((part, index) => [
-    `Part ${index + 1}: ${part.partName}`,
-    `Machine category / name: ${part.machine || [part.machineCategory, part.machineName].filter(Boolean).join(" / ")}`,
-    `Item code: ${part.itemCode || "Not provided"}`,
-    `Quantity: ${part.quantity}`,
+  return (quote.parts || []).map((part, i) => [
+    `Part ${i + 1}     : ${part.partName}`,
+    `Machine       : ${part.machine || "Not provided"}`,
+    `Item code     : ${part.itemCode || "Not provided"}`,
+    `Quantity      : ${part.quantity}`,
   ].join("\n")).join("\n\n");
 };
 
+// ── public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Verify SMTP credentials without sending a message.
+ * Throws if the connection or auth fails.
+ */
+export async function verifyQuoteEmail() {
+  const { config, transporter } = buildTransporter();
+  await transporter.verify();
+  return { recipient: config.to };
+}
+
+/**
+ * Send a new-quote-request notification email to the admin.
+ */
 export async function sendQuoteNotification(quote) {
-  const { config, transporter } = createQuoteTransporter();
-  const attachmentLine = quote.attachment
-    ? `Attachment: ${quote.attachment.url}`
-    : "Attachment: None";
+  const { config, transporter } = buildTransporter();
+
+  const subject =
+    `New ${quote.quoteType === "machine" ? "machine" : "spare-part"} ` +
+    `quote request from ${String(quote.company || "").replace(/[\r\n]/g, " ")}`;
+
+  const body = [
+    "A new quote request was submitted on the UnipackAuto website.",
+    "",
+    `Company  : ${quote.company}`,
+    `Contact  : ${quote.contactName}`,
+    `Email    : ${quote.email}`,
+    `Phone    : ${quote.phone}`,
+    `Location : ${quote.city}, ${quote.state}`,
+    "",
+    "── Requirement ──────────────────────────────",
+    getQuoteSummary(quote),
+    "",
+    `Message  : ${quote.message || "Not provided"}`,
+    `Attachment: ${quote.attachment?.url || "None"}`,
+    "",
+    `Request ID: ${quote.id}`,
+    "",
+    "Reply to this email to respond directly to the customer.",
+  ].join("\n");
+
   await transporter.sendMail({
-    from: config.from,
+    from: `"UnipackAuto Enquiries" <${config.from}>`,
     to: config.to,
     replyTo: quote.email,
-    subject: `New ${quote.quoteType === "machine" ? "machine" : "spare part"} quote request from ${quote.company.replace(/[\r\n]/g, " ")}`,
-    text: [
-      "A new quote request was submitted on the UnipackAuto website.",
-      "",
-      `Company: ${quote.company}`,
-      `Contact: ${quote.contactName}`,
-      `Email: ${quote.email}`,
-      `Phone: ${quote.phone}`,
-      `Location: ${quote.city}, ${quote.state}`,
-      "",
-      "Requirement:",
-      getQuoteSummary(quote),
-      "",
-      `Message: ${quote.message || "Not provided"}`,
-      attachmentLine,
-      "",
-      `Request ID: ${quote.id}`,
-    ].join("\n"),
+    subject,
+    text: body,
   });
 }
