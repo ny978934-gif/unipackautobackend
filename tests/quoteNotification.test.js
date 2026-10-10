@@ -9,7 +9,7 @@ test("configures Gmail notifications and removes spaces from grouped app passwor
   const config = getEmailConfiguration({
     GMAIL_USER: "quotes@unipackauto.in",
     GMAIL_APP_PASSWORD: "abcd efgh ijkl mnop",
-    ADMIN_EMAIL: "sales@unipackauto.in",
+    ADMIN_EMAIL: "quotes@unipackauto.in",
   });
 
   assert.deepEqual(config.transport, {
@@ -17,13 +17,24 @@ test("configures Gmail notifications and removes spaces from grouped app passwor
     auth: { user: "quotes@unipackauto.in", pass: "abcdefghijklmnop" },
   });
   assert.equal(config.from, "quotes@unipackauto.in");
-  assert.equal(config.to, "sales@unipackauto.in");
+  assert.equal(config.to, "quotes@unipackauto.in");
 });
 
 test("rejects partially configured Gmail credentials", () => {
   assert.throws(
     () => getEmailConfiguration({ GMAIL_USER: "quotes@unipackauto.in", ADMIN_EMAIL: "sales@unipackauto.in" }),
     /GMAIL_USER and GMAIL_APP_PASSWORD/
+  );
+});
+
+test("rejects a Gmail recipient that differs from the sending Gmail account", () => {
+  assert.throws(
+    () => getEmailConfiguration({
+      GMAIL_USER: "quotes@unipackauto.in",
+      GMAIL_APP_PASSWORD: "abcdefghijklmnop",
+      ADMIN_EMAIL: "sales@unipackauto.in",
+    }),
+    /GMAIL_USER and ADMIN_EMAIL must be the same/
   );
 });
 

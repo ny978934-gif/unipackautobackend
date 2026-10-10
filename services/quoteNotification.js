@@ -15,12 +15,15 @@ export const getEmailConfiguration = (env = process.env) => {
     if (!to || !emailPattern.test(gmailUser) || !emailPattern.test(to)) {
       throw new Error("Set GMAIL_USER and ADMIN_EMAIL to valid email addresses.");
     }
+    if (gmailUser.toLowerCase() !== to.toLowerCase()) {
+      throw new Error("GMAIL_USER and ADMIN_EMAIL must be the same Gmail address.");
+    }
     return {
       transport: {
         service: "gmail",
         auth: { user: gmailUser, pass: gmailAppPassword },
       },
-      to,
+      to: gmailUser,
       from: gmailUser,
     };
   }
