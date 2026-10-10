@@ -7,7 +7,11 @@ import QuoteRequest from "../models/QuoteRequest.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
 import cloudinary, { isConfigured } from "../config/cloudinary.js";
 import { uploadsDirectory } from "../config/uploads.js";
-import { sendQuoteNotification } from "../services/quoteNotification.js";
+import {
+  describeEmailFailure,
+  sendQuoteNotification,
+  verifyQuoteEmail,
+} from "../services/quoteNotification.js";
 
 const router = Router();
 const maximumAttachmentSize = 10 * 1024 * 1024;
@@ -186,10 +190,17 @@ router.post("/", parseAttachment, async (req, res) => {
     try {
       await sendQuoteNotification(savedQuote);
       savedQuote.notificationStatus = "sent";
+      savedQuote.notificationError = "";
     } catch (error) {
       notificationSent = false;
       savedQuote.notificationStatus = "failed";
-      console.error(`Email notification failed for quote request ${savedQuote.id}:`, error.message);
+      savedQuote.notificationError = describeEmailFailure(error);
+      console.error(`Email notification failed for quote request ${savedQuote.id}:`, {
+        code: error.code || "UNKNOWN",
+        responseCode: error.responseCode || null,
+        message: error.message,
+        guidance: savedQuote.notificationError,
+      });
     }
     await savedQuote.save();
     return res.status(201).json({
@@ -201,6 +212,25 @@ router.post("/", parseAttachment, async (req, res) => {
     if (error.status) return res.status(error.status).json({ message: error.message });
     console.error("Error creating quote request:", error);
     return res.status(500).json({ message: "Your quote request could not be saved. Please try again." });
+  }
+});
+
+router.post("/email-check", requireAdmin, async (_req, res) => {
+  try {
+    const result = await verifyQuoteEmail();
+    return res.json({
+      ok: true,
+      message: `Gmail SMTP authentication succeeded. Notifications will be sent to ${result.recipient}.`,
+    });
+  } catch (error) {
+    const message = describeEmailFailure(error);
+    console.error("Gmail SMTP check failed:", {
+      code: error.code || "UNKNOWN",
+      responseCode: error.responseCode || null,
+      message: error.message,
+      guidance: message,
+    });
+    return res.status(503).json({ ok: false, message });
   }
 });
 

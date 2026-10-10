@@ -48,6 +48,7 @@ const quoteRequestSchema = new mongoose.Schema(
       enum: ["pending", "sent", "failed"],
       default: "pending",
     },
+    notificationError: { type: String, trim: true, maxlength: 500, default: "" },
   },
   { timestamps: true }
 );
