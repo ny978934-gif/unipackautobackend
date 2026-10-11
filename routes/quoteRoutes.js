@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
 import multer from "multer";
+import mongoose from "mongoose";
 import QuoteRequest from "../models/QuoteRequest.js";
 import Product from "../models/Product.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
@@ -10,7 +11,6 @@ import cloudinary, { isConfigured } from "../config/cloudinary.js";
 import { uploadsDirectory } from "../config/uploads.js";
 import {
   describeEmailFailure,
-  sendCustomerQuotation,
   sendQuoteNotification,
 } from "../services/quoteNotification.js";
 
@@ -181,6 +181,54 @@ const storeAttachment = async (req, file) => {
   };
 };
 
+// ── Price lookup ──────────────────────────────────────────────────────────────
+/**
+ * For each spare-part row in the validated quote, fetch the catalogue price
+ * from MongoDB using the productId the frontend sent.
+ *
+ * Returns an array ready for sendQuoteNotification / calculateQuotationTotals:
+ *   { name, itemCode, quantity, unitPrice (rupees float, 0 = not found) }
+ *
+ * Never throws — missing prices fall back to 0 so the email still sends.
+ */
+const enrichPartsWithPrices = async (parts) => {
+  // Collect distinct valid ObjectIds
+  const validIds = [
+    ...new Set(
+      parts
+        .map((p) => p.productId)
+        .filter((id) => id && mongoose.isValidObjectId(id))
+    ),
+  ];
+
+  // Fetch all in one query
+  const products = validIds.length
+    ? await Product.find(
+        { _id: { $in: validIds } },
+        { _id: 1, name: 1, partCode: 1, price: 1 }
+      ).lean()
+    : [];
+
+  const priceMap = new Map(
+    products.map((p) => [String(p._id), p])
+  );
+
+  return parts.map((part) => {
+    const product = part.productId ? priceMap.get(String(part.productId)) : null;
+    return {
+      name:      product?.name     || part.partName,
+      itemCode:  product?.partCode || part.itemCode || "",
+      quantity:  part.quantity,
+      // Price stored in MongoDB as rupees (float). 0 means unknown / "price on request".
+      unitPrice: typeof product?.price === "number" && product.price > 0
+        ? product.price
+        : 0,
+    };
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.post("/", parseAttachment, async (req, res) => {
   let quote;
   try {
@@ -193,25 +241,36 @@ router.post("/", parseAttachment, async (req, res) => {
     if (req.file) quote.attachment = await storeAttachment(req, req.file);
     const savedQuote = await QuoteRequest.create(quote);
 
+    // ── Enrich spare-part rows with catalogue prices from MongoDB ──────────────
+    let pricedItems = null;
+    if (savedQuote.quoteType === "sparePart" && savedQuote.parts?.length) {
+      try {
+        pricedItems = await enrichPartsWithPrices(savedQuote.parts);
+      } catch (err) {
+        // Non-fatal — log and continue without prices
+        console.warn("Price lookup failed for quote", savedQuote.id, err.message);
+      }
+    }
+
     let notificationSent = true;
     try {
-      const emailInfo = await sendQuoteNotification(savedQuote);
+      const emailInfo = await sendQuoteNotification(savedQuote, pricedItems);
       savedQuote.notificationStatus = "sent";
       savedQuote.notificationError = "";
-      console.info(`Quote notification accepted by SMTP for ${savedQuote.id}:`, {
+      console.info(`Quote notification sent for ${savedQuote.id}:`, {
         messageId: emailInfo.messageId,
-        accepted: emailInfo.accepted,
-        response: emailInfo.response,
+        accepted:  emailInfo.accepted,
+        response:  emailInfo.response,
       });
     } catch (error) {
       notificationSent = false;
       savedQuote.notificationStatus = "failed";
       savedQuote.notificationError = describeEmailFailure(error);
-      console.error(`Email notification failed for quote request ${savedQuote.id}:`, {
-        code: error.code || "UNKNOWN",
+      console.error(`Email notification failed for quote ${savedQuote.id}:`, {
+        code:         error.code || "UNKNOWN",
         responseCode: error.responseCode || null,
-        message: error.message,
-        guidance: savedQuote.notificationError,
+        message:      error.message,
+        guidance:     savedQuote.notificationError,
       });
     }
     await savedQuote.save();
@@ -234,81 +293,6 @@ router.get("/", requireAdmin, async (_req, res) => {
   } catch (error) {
     console.error("Error fetching quote requests:", error);
     return res.status(500).json({ message: "Could not fetch quote requests." });
-  }
-});
-
-router.post("/:id/send-quotation", requireAdmin, async (req, res) => {
-  try {
-    const quote = await QuoteRequest.findById(req.params.id);
-    if (!quote) return res.status(404).json({ message: "Quote request not found." });
-    if (quote.quoteType !== "sparePart" || !quote.parts.length) {
-      return res.status(400).json({ message: "Price breakdown emails are available for spare-part requests only." });
-    }
-
-    const products = await Promise.all(quote.parts.map(async (part, index) => {
-      let product = null;
-      if (part.productId) {
-        product = await Product.findOne({ _id: part.productId, type: "sparepart" }).populate("category");
-        if (!product) {
-          throw Object.assign(new Error(`Part ${index + 1} no longer matches an available spare part. Update the catalogue or request before sending.`), { status: 409 });
-        }
-      } else if (part.itemCode) {
-        const matches = await Product.find({
-          type: "sparepart",
-          partCode: { $regex: `^${part.itemCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
-        }).populate("category");
-        if (matches.length > 1) {
-          throw Object.assign(new Error(`Part ${index + 1} item code matches multiple catalogue products. Update the catalogue to make item codes unique.`), { status: 409 });
-        }
-        product = matches[0] || null;
-      } else {
-        const matches = await Product.find({
-          type: "sparepart",
-          name: { $regex: `^${part.partName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
-        }).populate("category");
-        if (matches.length > 1) {
-          throw Object.assign(new Error(`Part ${index + 1} name matches multiple catalogue products. Update the request with its item code before sending.`), { status: 409 });
-        }
-        product = matches[0] || null;
-      }
-
-      if (!product) {
-        throw Object.assign(new Error(`Part ${index + 1} was not found in the spare-parts catalogue. Update the request before sending the quotation.`), { status: 409 });
-      }
-      if (!Number.isFinite(product.price) || product.price < 0) {
-        throw Object.assign(new Error(`The catalogue price for "${product.name}" is invalid.`), { status: 422 });
-      }
-      return {
-        name: product.name,
-        itemCode: product.partCode || "",
-        quantity: part.quantity,
-        unitPrice: product.price,
-      };
-    }));
-
-    const result = await sendCustomerQuotation(quote, products);
-    quote.status = "quoted";
-    quote.quotation = {
-      sentAt: new Date(),
-      subtotalCents: result.subtotalCents,
-      gstCents: result.gstCents,
-      grossTotalCents: result.grossTotalCents,
-    };
-    await quote.save();
-    return res.json({
-      message: `Quotation sent to ${quote.email}.`,
-      request: quote,
-      totals: {
-        subtotalCents: result.subtotalCents,
-        gstCents: result.gstCents,
-        grossTotalCents: result.grossTotalCents,
-      },
-    });
-  } catch (error) {
-    if (error.status) return res.status(error.status).json({ message: error.message });
-    if (error.name === "CastError") return res.status(404).json({ message: "Quote request not found." });
-    console.error("Error sending customer quotation:", error);
-    return res.status(503).json({ message: describeEmailFailure(error) });
   }
 });
 

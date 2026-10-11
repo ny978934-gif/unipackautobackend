@@ -1,142 +1,234 @@
 import nodemailer from "nodemailer";
 
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const rupeeFormatter = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+// ── Number helpers ─────────────────────────────────────────────────────────────
 
-export const formatINR = (cents) => {
-  if (!Number.isSafeInteger(cents) || cents < 0) {
-    throw invalidQuotation("Currency amount must be a non-negative integer number of paise.");
+const INR = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+
+/** Format integer paise as ₹X,XX,XXX.XX */
+export const formatINR = (paise) => {
+  if (!Number.isSafeInteger(paise) || paise < 0) {
+    throw Object.assign(
+      new Error("Currency amount must be a non-negative integer (paise)."),
+      { status: 422 }
+    );
   }
-  const wholeRupees = Math.floor(cents / 100);
-  const paise = String(cents % 100).padStart(2, "0");
-  return `₹${rupeeFormatter.format(wholeRupees)}.${paise}`;
+  const rupees = Math.floor(paise / 100);
+  const paiseStr = String(paise % 100).padStart(2, "0");
+  return `\u20B9${INR.format(rupees)}.${paiseStr}`;
 };
 
-const escapeHtml = (value) =>
-  String(value ?? "").replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[character]);
-
-const toCents = (value) => {
-  const [mantissa, exponentText] = String(value).toLowerCase().split("e");
-  const exponent = Number(exponentText || 0);
-  const [whole, fraction = ""] = mantissa.split(".");
-  const digits = `${whole}${fraction}`;
-  const centsPosition = whole.length + exponent + 2;
-  if (centsPosition >= digits.length) {
-    return Number(digits + "0".repeat(centsPosition - digits.length));
+/** Convert a JS float price (rupees) to integer paise without float drift */
+const toPaise = (value) => {
+  const [mantissa = "", expText = "0"] = String(value).toLowerCase().split("e");
+  const exp = Number(expText);
+  const [whole = "", frac = ""] = mantissa.split(".");
+  const digits = whole + frac;
+  const paisePos = whole.length + exp + 2;          // position of paise decimal point
+  if (paisePos >= digits.length) {
+    return Number(digits + "0".repeat(paisePos - digits.length));
   }
-  if (centsPosition <= 0) return 0;
-  const rounded = BigInt(digits.slice(0, centsPosition)) +
-    (digits[centsPosition] >= "5" ? 1n : 0n);
+  if (paisePos <= 0) return 0;
+  const rounded =
+    BigInt(digits.slice(0, paisePos)) +
+    (digits[paisePos] >= "5" ? 1n : 0n);
   return Number(rounded);
 };
 
-const invalidQuotation = (message) => Object.assign(new Error(message), { status: 422 });
-
-export const calculateQuotationTotals = (items) => {
-  if (!Array.isArray(items) || !items.length) {
-    throw invalidQuotation("A quotation must include at least one spare part.");
-  }
-  let subtotalCents = 0;
-  const pricedItems = items.map((item, index) => {
-    if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 100000) {
-      throw invalidQuotation(`Part ${index + 1} quantity must be a whole number from 1 to 100,000.`);
-    }
-    if (typeof item.unitPrice !== "number" || !Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
-      throw invalidQuotation(`Part ${index + 1} price must be a valid non-negative number.`);
-    }
-    const unitPriceCents = toCents(item.unitPrice);
-    const totalCents = unitPriceCents * item.quantity;
-    if (!Number.isSafeInteger(unitPriceCents) || !Number.isSafeInteger(totalCents)) {
-      throw invalidQuotation(`Part ${index + 1} total exceeds the supported amount.`);
-    }
-    subtotalCents += totalCents;
-    if (!Number.isSafeInteger(subtotalCents)) {
-      throw invalidQuotation("Quotation subtotal exceeds the supported amount.");
-    }
-    return { ...item, unitPriceCents, totalCents };
-  });
-  const gstCents = Number((BigInt(subtotalCents) * 18n + 50n) / 100n);
-  const grossTotalCents = subtotalCents + gstCents;
-  if (!Number.isSafeInteger(grossTotalCents)) {
-    throw invalidQuotation("Quotation gross total exceeds the supported amount.");
-  }
-  return { items: pricedItems, subtotalCents, gstCents, grossTotalCents };
-};
+// ── Price calculation ─────────────────────────────────────────────────────────
 
 /**
- * Build a nodemailer transport config from environment variables.
- *
- * Priority:
- *   1. GMAIL_USER → use Gmail with its App Password when configured
- *   2. SMTP_HOST  → use generic SMTP when Gmail credentials are not configured
- *
- * Required env vars for SMTP:
- *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM, ADMIN_EMAIL
- *
- * Required env vars for Gmail shorthand:
- *   GMAIL_USER, GMAIL_APP_PASSWORD, ADMIN_EMAIL
+ * items  – array of { name, itemCode, quantity, unitPrice (rupees float) }
+ * Returns { items (with unitPaiseCents + totalPaise), subtotalPaise, gstPaise, grandTotalPaise }
  */
-export const getEmailConfiguration = (env = process.env) => {
-  const adminEmail = env.ADMIN_EMAIL?.trim();
-  const gmailUser = env.GMAIL_USER?.trim();
-  const gmailPassword = env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
-
-  // Prefer Gmail explicitly configured with an App Password over any stale SMTP settings.
-  if (gmailUser || gmailPassword) {
-    if (!gmailUser || !gmailPassword) {
-      throw new Error(
-        "GMAIL_USER and GMAIL_APP_PASSWORD must both be set to use the Gmail shorthand."
-      );
-    }
-    if (!emailPattern.test(gmailUser)) {
-      throw new Error("GMAIL_USER must be a valid Gmail address.");
-    }
-    if (!adminEmail || !emailPattern.test(adminEmail)) {
-      throw new Error("ADMIN_EMAIL must be a valid email address.");
-    }
-    if (gmailUser.toLowerCase() !== adminEmail.toLowerCase()) {
-      throw new Error("GMAIL_USER and ADMIN_EMAIL must be the same address for Gmail notifications.");
-    }
-    return {
-      transport: { service: "gmail", auth: { user: gmailUser, pass: gmailPassword } },
-      from: gmailUser,
-      to: gmailUser,
-    };
+export const calculateQuotationTotals = (items) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw Object.assign(
+      new Error("A quotation must include at least one spare part."),
+      { status: 422 }
+    );
   }
 
-  // Use generic SMTP only if Gmail App Password credentials are absent.
+  let subtotalPaise = 0;
+
+  const priced = items.map((item, i) => {
+    const qty = item.quantity;
+    if (!Number.isInteger(qty) || qty < 1 || qty > 100_000) {
+      throw Object.assign(
+        new Error(`Part ${i + 1}: quantity must be a whole number from 1 to 100,000.`),
+        { status: 422 }
+      );
+    }
+    if (typeof item.unitPrice !== "number" || !Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+      throw Object.assign(
+        new Error(`Part ${i + 1}: unit price must be a valid non-negative number.`),
+        { status: 422 }
+      );
+    }
+
+    const unitPaise = toPaise(item.unitPrice);
+    const totalPaise = unitPaise * qty;
+
+    if (!Number.isSafeInteger(unitPaise) || !Number.isSafeInteger(totalPaise)) {
+      throw Object.assign(
+        new Error(`Part ${i + 1}: amount exceeds the supported limit.`),
+        { status: 422 }
+      );
+    }
+
+    subtotalPaise += totalPaise;
+    if (!Number.isSafeInteger(subtotalPaise)) {
+      throw Object.assign(
+        new Error("Quotation subtotal exceeds the supported limit."),
+        { status: 422 }
+      );
+    }
+
+    return { ...item, unitPaise, totalPaise };
+  });
+
+  // GST 18 % — round half-up using integer arithmetic
+  const gstPaise = Number((BigInt(subtotalPaise) * 18n + 50n) / 100n);
+  const grandTotalPaise = subtotalPaise + gstPaise;
+
+  if (!Number.isSafeInteger(grandTotalPaise)) {
+    throw Object.assign(
+      new Error("Quotation grand total exceeds the supported limit."),
+      { status: 422 }
+    );
+  }
+
+  return { items: priced, subtotalPaise, gstPaise, grandTotalPaise };
+};
+
+// ── HTML helpers ──────────────────────────────────────────────────────────────
+
+const esc = (v) =>
+  String(v ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
+
+const COL_STYLE  = "padding:11px 12px;border-bottom:1px solid #ede8f0;font-size:13px;";
+const HEAD_STYLE = "padding:11px 12px;background:#f7f2f8;font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#4a1155;";
+
+const buildItemisedTable = (totals) => {
+  const rows = totals.items
+    .map(
+      (item, i) => `
+      <tr>
+        <td style="${COL_STYLE}">${esc(i + 1)}</td>
+        <td style="${COL_STYLE}">${esc(item.name)}</td>
+        <td style="${COL_STYLE}">${esc(item.itemCode || "—")}</td>
+        <td style="${COL_STYLE}text-align:right;">${esc(item.quantity)}</td>
+        <td style="${COL_STYLE}text-align:right;white-space:nowrap;">${
+          item.unitPrice > 0 ? formatINR(item.unitPaise) : "<em style='color:#999;'>On request</em>"
+        }</td>
+        <td style="${COL_STYLE}text-align:right;white-space:nowrap;">${
+          item.unitPrice > 0 ? formatINR(item.totalPaise) : "<em style='color:#999;'>—</em>"
+        }</td>
+      </tr>`
+    )
+    .join("");
+
+  const summaryRow = (label, value, bold = false, accent = false) => `
+    <tr>
+      <td colspan="5" style="padding:8px 12px;text-align:right;font-size:13px;${bold ? "font-weight:700;" : "color:#555;"}${accent ? "color:#66116f;" : ""}">${esc(label)}</td>
+      <td style="padding:8px 12px;text-align:right;white-space:nowrap;font-size:13px;${bold ? "font-weight:700;" : ""}${accent ? "color:#66116f;font-size:15px;" : ""}">${value}</td>
+    </tr>`;
+
+  const hasPrices = totals.items.some((item) => item.unitPrice > 0);
+
+  return `
+  <div style="overflow-x:auto;margin:20px 0;">
+    <table role="table" cellspacing="0" cellpadding="0"
+      style="width:100%;min-width:560px;border-collapse:collapse;border:1px solid #ede8f0;border-radius:8px;overflow:hidden;">
+      <thead>
+        <tr>
+          <th style="${HEAD_STYLE}">#</th>
+          <th style="${HEAD_STYLE}">Spare Part Name</th>
+          <th style="${HEAD_STYLE}">Item Code</th>
+          <th style="${HEAD_STYLE}text-align:right;">Qty</th>
+          <th style="${HEAD_STYLE}text-align:right;">Unit Price</th>
+          <th style="${HEAD_STYLE}text-align:right;">Line Total</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+      ${hasPrices ? `
+      <tfoot style="border-top:2px solid #ede8f0;">
+        ${summaryRow("Subtotal (before GST)", formatINR(totals.subtotalPaise))}
+        ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
+        <tr>
+          <td colspan="5" style="padding:12px;text-align:right;font-weight:700;font-size:14px;border-top:2px solid #66116f;color:#66116f;">
+            Grand Total (incl. GST)
+          </td>
+          <td style="padding:12px;text-align:right;white-space:nowrap;font-weight:800;font-size:17px;border-top:2px solid #66116f;color:#66116f;">
+            ${formatINR(totals.grandTotalPaise)}
+          </td>
+        </tr>
+      </tfoot>` : ""}
+    </table>
+  </div>`;
+};
+
+const buildItemisedText = (totals) => {
+  const DIVIDER = "-".repeat(72);
+  const col = (v, w) => String(v ?? "").padEnd(w).slice(0, w);
+
+  const header = `${col("#", 3)}${col("Spare Part Name", 30)}${col("Code", 14)}${col("Qty", 6)}${col("Unit Price", 13)}${"Line Total"}`;
+  const rows = totals.items.map((item, i) =>
+    `${col(i + 1, 3)}${col(item.name, 30)}${col(item.itemCode || "—", 14)}${col(item.quantity, 6)}${col(
+      item.unitPrice > 0 ? formatINR(item.unitPaise) : "On request", 13
+    )}${item.unitPrice > 0 ? formatINR(item.totalPaise) : "—"}`
+  );
+
+  const hasPrices = totals.items.some((item) => item.unitPrice > 0);
+
+  return [
+    DIVIDER,
+    header,
+    DIVIDER,
+    ...rows,
+    DIVIDER,
+    ...(hasPrices
+      ? [
+          `${"Subtotal (before GST):".padStart(63)} ${formatINR(totals.subtotalPaise)}`,
+          `${"GST @ 18%:".padStart(63)} ${formatINR(totals.gstPaise)}`,
+          `${"Grand Total (incl. GST):".padStart(63)} ${formatINR(totals.grandTotalPaise)}`,
+          DIVIDER,
+        ]
+      : []),
+  ].join("\n");
+};
+
+// ── SMTP transport factory ────────────────────────────────────────────────────
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export const getEmailConfiguration = (env = process.env) => {
+  const adminEmail = env.ADMIN_EMAIL?.trim();
+
+  // ── 1. Generic SMTP (smtp.gmail.com or any other host) ──────────────────────
   if (env.SMTP_HOST?.trim()) {
     const host   = env.SMTP_HOST.trim();
     const port   = Number(env.SMTP_PORT || 587);
     const secure = String(env.SMTP_SECURE || "").toLowerCase() === "true";
     const user   = env.SMTP_USER?.trim();
     const pass   = env.SMTP_PASS?.trim();
-    const from   = env.EMAIL_FROM?.trim() || user;
+    const from   = (env.EMAIL_FROM?.trim()) || user;
 
-    if (!adminEmail || !emailPattern.test(adminEmail)) {
+    if (!adminEmail || !EMAIL_RE.test(adminEmail))
       throw new Error("ADMIN_EMAIL must be a valid email address.");
-    }
-    if (!from || !emailPattern.test(from)) {
-      throw new Error("EMAIL_FROM must be a valid email address.");
-    }
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    if (!from || !EMAIL_RE.test(from))
+      throw new Error("EMAIL_FROM (or SMTP_USER) must be a valid email address.");
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
       throw new Error("SMTP_PORT must be a number between 1 and 65,535.");
-    }
-    if (Boolean(user) !== Boolean(pass)) {
+    if (Boolean(user) !== Boolean(pass))
       throw new Error("SMTP_USER and SMTP_PASS must both be set (or both left empty).");
-    }
+    if (pass && (pass === "your_16_character_app_password_here" || pass.length < 8))
+      throw new Error("SMTP_PASS appears to still be a placeholder. Replace it with your real App Password.");
 
     return {
       transport: {
-        host,
-        port,
-        secure,
+        host, port, secure,
         ...(user && pass ? { auth: { user, pass } } : {}),
       },
       from,
@@ -144,242 +236,246 @@ export const getEmailConfiguration = (env = process.env) => {
     };
   }
 
-  // Nothing configured.
+  // ── 2. Gmail shorthand ───────────────────────────────────────────────────────
+  const gmailUser = env.GMAIL_USER?.trim();
+  const gmailPass = env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
+
+  if (gmailUser || gmailPass) {
+    if (!gmailUser || !gmailPass)
+      throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD must both be set.");
+    if (!EMAIL_RE.test(gmailUser))
+      throw new Error("GMAIL_USER must be a valid Gmail address.");
+    const to = adminEmail || gmailUser;
+    if (!EMAIL_RE.test(to))
+      throw new Error("ADMIN_EMAIL must be a valid email address.");
+    return {
+      transport: { service: "gmail", auth: { user: gmailUser, pass: gmailPass } },
+      from: gmailUser,
+      to,
+    };
+  }
+
+  // ── 3. Nothing configured ────────────────────────────────────────────────────
   throw new Error(
-    "Email is not configured. Add SMTP_HOST, SMTP_USER, SMTP_PASS, EMAIL_FROM, and ADMIN_EMAIL to the server .env file."
+    "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM, and ADMIN_EMAIL in .env."
   );
 };
 
-/**
- * Translate nodemailer / network errors into human-readable guidance.
- */
 export const describeEmailFailure = (error) => {
   const code = String(error?.code || "").toUpperCase();
-  const responseCode = Number(error?.responseCode || 0);
+  const rc   = Number(error?.responseCode || 0);
 
-  if (code === "EAUTH" || responseCode === 535 || responseCode === 534) {
-    return (
-      "Gmail rejected the password. Make sure SMTP_PASS (or GMAIL_APP_PASSWORD) is a " +
-      "16-character App Password — not your Gmail login password. " +
-      "Generate one at: myaccount.google.com → Security → 2-Step Verification → App passwords."
-    );
-  }
-  if (code === "ETIMEDOUT" || code === "ESOCKET" || code === "ECONNECTION" || code === "ECONNREFUSED") {
-    return (
-      "Could not connect to the SMTP server. " +
-      "For Gmail use port 465 with SMTP_SECURE=true, or port 587 with SMTP_SECURE=false. " +
-      "Check that outbound SMTP is not blocked by your host or firewall."
-    );
-  }
-  if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
-    return (
-      "Could not resolve the SMTP hostname. " +
-      "Check SMTP_HOST is correct (smtp.gmail.com for Gmail) and the server has internet/DNS access."
-    );
-  }
-  if (error?.message?.includes("not configured") || error?.message?.includes("must both be set")) {
+  if (code === "EAUTH" || rc === 535 || rc === 534)
+    return "Gmail rejected the password. SMTP_PASS must be a 16-character App Password (not your Gmail login). " +
+      "Generate one at myaccount.google.com → Security → 2-Step Verification → App passwords.";
+
+  if (["ETIMEDOUT","ESOCKET","ECONNECTION","ECONNREFUSED"].includes(code))
+    return "Cannot reach the SMTP server. For Gmail use port 465 + SMTP_SECURE=true, or port 587 + SMTP_SECURE=false. " +
+      "Check that outbound SMTP is not blocked by your host/firewall.";
+
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN")
+    return "Cannot resolve SMTP hostname. Check SMTP_HOST (smtp.gmail.com for Gmail) and server DNS/internet access.";
+
+  if (error?.message?.startsWith("SMTP_PASS appears to still be a placeholder"))
+    return error.message;
+
+  if (error?.message?.includes("not configured") || error?.message?.includes("must both be set"))
     return `Email setup is incomplete: ${error.message}`;
-  }
-  return `Email delivery failed (${code || "unknown error"}): ${error?.message || "check server logs for details"}.`;
+
+  return `Email delivery failed (${code || "unknown"}): ${error?.message || "check server logs"}.`;
 };
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// ── Transport helpers ─────────────────────────────────────────────────────────
 
-const buildTransporter = () => {
+const makeTransporter = () => {
   const config = getEmailConfiguration();
   return { config, transporter: nodemailer.createTransport(config.transport) };
 };
 
-const getQuoteSummary = (quote) => {
-  if (quote.quoteType === "machine") {
-    return [
-      `Machine type : ${quote.machineType}`,
-      `Model        : ${quote.model}`,
-      `Quantity     : ${quote.quantity}`,
-      `Specifications: ${quote.specifications || "Not provided"}`,
-    ].join("\n");
-  }
-  return (quote.parts || []).map((part, i) => [
-    `Part ${i + 1}     : ${part.partName}`,
-    `Machine       : ${part.machine || "Not provided"}`,
-    `Item code     : ${part.itemCode || "Not provided"}`,
-    `Quantity      : ${part.quantity}`,
-  ].join("\n")).join("\n\n");
-};
+// ── Public API ────────────────────────────────────────────────────────────────
 
-// ── public API ────────────────────────────────────────────────────────────────
-
-/**
- * Verify SMTP credentials without sending a message.
- * Throws if the connection or auth fails.
- */
+/** Verify SMTP credentials without sending a message. */
 export async function verifyQuoteEmail() {
-  const { config, transporter } = buildTransporter();
+  const { config, transporter } = makeTransporter();
   await transporter.verify();
   return { recipient: config.to };
 }
 
-export async function sendCustomerQuotation(quote, items) {
-  const totals = calculateQuotationTotals(items);
-  const { config, transporter } = buildTransporter();
-  const customerName = escapeHtml(quote.contactName);
-  const rows = totals.items.map((item) => `
-    <tr>
-      <td style="padding:12px 10px;border-bottom:1px solid #e8e8e8;">${escapeHtml(item.name)}</td>
-      <td style="padding:12px 10px;border-bottom:1px solid #e8e8e8;">${escapeHtml(item.itemCode || "—")}</td>
-      <td style="padding:12px 10px;border-bottom:1px solid #e8e8e8;text-align:right;">${item.quantity}</td>
-      <td style="padding:12px 10px;border-bottom:1px solid #e8e8e8;text-align:right;white-space:nowrap;">${formatINR(item.unitPriceCents)}</td>
-      <td style="padding:12px 10px;border-bottom:1px solid #e8e8e8;text-align:right;white-space:nowrap;">${formatINR(item.totalCents)}</td>
-    </tr>`).join("");
-  const plainItems = totals.items.map((item) =>
-    `${item.name} | ${item.itemCode || "—"} | ${item.quantity} | ${formatINR(item.unitPriceCents)} | ${formatINR(item.totalCents)}`
-  );
-  const info = await transporter.sendMail({
-    from: `"UnipackAuto Quotations" <${config.from}>`,
-    to: quote.email,
-    replyTo: config.from,
-    subject: `Your UnipackAuto spare parts quotation - ${String(quote.company || "").replace(/[\r\n]/g, " ")}`,
-    text: [
-      `Dear ${quote.contactName},`,
-      "",
-      "Thank you for your spare parts enquiry. Please find your quotation below.",
-      "",
-      "Spare Part | Item Code | Qty | Unit Price | Total",
-      ...plainItems,
-      "",
-      `Subtotal (Before GST): ${formatINR(totals.subtotalCents)}`,
-      `GST (18%): ${formatINR(totals.gstCents)}`,
-      `Gross Total (Including GST): ${formatINR(totals.grossTotalCents)}`,
-      "",
-      "Prices are based on our current catalogue and are subject to confirmation.",
-      "Regards,",
-      "UnipackAuto Team",
-    ].join("\n"),
-    html: `<!doctype html>
-<html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;background:#f5f3f6;font-family:Arial,Helvetica,sans-serif;color:#29232b;">
-  <div style="max-width:720px;margin:24px auto;padding:0 14px;">
-    <div style="background:#66116f;color:#fff;padding:24px 26px;border-radius:12px 12px 0 0;">
-      <div style="font-size:12px;letter-spacing:1.5px;opacity:.85;">UNIPACKAUTO · QUOTATION</div>
-      <h1 style="font-size:23px;margin:10px 0 0;">Spare Parts Quotation</h1>
-    </div>
-    <div style="background:#fff;padding:24px 26px;border:1px solid #eee;border-top:0;">
-      <p>Dear ${customerName},</p>
-      <p>Thank you for your enquiry. Please find your current price breakdown below.</p>
-      <p><strong>Company:</strong> ${escapeHtml(quote.company)}</p>
-      <div style="overflow-x:auto;">
-        <table role="table" style="width:100%;min-width:580px;border-collapse:collapse;font-size:14px;">
-          <thead><tr style="background:#f7f2f8;text-align:left;">
-            <th style="padding:12px 10px;">Spare Part Name</th><th style="padding:12px 10px;">Item Code</th>
-            <th style="padding:12px 10px;text-align:right;">Qty</th><th style="padding:12px 10px;text-align:right;">Unit Price</th>
-            <th style="padding:12px 10px;text-align:right;">Total</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      <table role="presentation" style="width:100%;max-width:380px;margin:20px 0 8px auto;border-collapse:collapse;">
-        <tr><td style="padding:7px 0;color:#5b535d;">Subtotal (Before GST)</td><td style="padding:7px 0;text-align:right;white-space:nowrap;">${formatINR(totals.subtotalCents)}</td></tr>
-        <tr><td style="padding:7px 0;color:#5b535d;">GST (18%)</td><td style="padding:7px 0;text-align:right;white-space:nowrap;">${formatINR(totals.gstCents)}</td></tr>
-        <tr><td style="padding:13px 0;border-top:2px solid #66116f;font-weight:bold;font-size:16px;color:#66116f;">Gross Total (Including GST)</td><td style="padding:13px 0;border-top:2px solid #66116f;text-align:right;white-space:nowrap;font-weight:bold;font-size:18px;color:#66116f;">${formatINR(totals.grossTotalCents)}</td></tr>
-      </table>
-      <p style="font-size:12px;color:#777;">Prices are based on our current catalogue and are subject to confirmation.</p>
-      <p style="margin-top:24px;">Regards,<br><strong>UnipackAuto Team</strong></p>
-    </div>
-    <div style="padding:14px 20px;color:#777;font-size:12px;text-align:center;">UnipackAuto · Packaging Automation Solutions</div>
-  </div>
-</body></html>`,
-  });
-  const accepted = (info.accepted || []).map((recipient) =>
-    typeof recipient === "string" ? recipient : recipient.address
-  );
-  if (!accepted.some((recipient) => recipient?.toLowerCase() === quote.email.toLowerCase())) {
-    const error = new Error("SMTP did not accept the customer quotation recipient.");
-    error.code = "RECIPIENT_NOT_ACCEPTED";
-    throw error;
-  }
-  return { ...totals, messageId: info.messageId, accepted };
-}
-
-export async function sendQuoteEmailTest() {
-  const { config, transporter } = buildTransporter();
-  const info = await transporter.sendMail({
-    from: `"UnipackAuto Email Test" <${config.from}>`,
-    to: config.to,
-    subject: "UnipackAuto quote email delivery test",
-    text: [
-      "This is a test email from the UnipackAuto quote notification service.",
-      `Recipient: ${config.to}`,
-      "If you can read this, the SMTP server accepted the message.",
-      "SMTP acceptance does not guarantee Inbox placement; check Spam, All Mail, filters, and the Sent folder.",
-    ].join("\n"),
-  });
-  const accepted = (info.accepted || []).map((recipient) =>
-    typeof recipient === "string" ? recipient : recipient.address
-  );
-  const recipientAccepted = accepted.some(
-    (recipient) => recipient?.toLowerCase() === config.to.toLowerCase()
-  );
-  if (!recipientAccepted) {
-    const error = new Error("SMTP did not accept the configured notification recipient.");
-    error.code = "RECIPIENT_NOT_ACCEPTED";
-    throw error;
-  }
-  return {
-    recipient: config.to,
-    messageId: info.messageId,
-    response: info.response,
-    accepted,
-  };
-}
-
 /**
  * Send a new-quote-request notification email to the admin.
+ *
+ * @param {object}   quote      – saved QuoteRequest document
+ * @param {Array}    [pricedItems] – optional pre-enriched items from MongoDB price lookup
+ *   Each item: { name, itemCode, quantity, unitPrice (rupees float, 0 = unknown) }
  */
-export async function sendQuoteNotification(quote) {
-  const { config, transporter } = buildTransporter();
+export async function sendQuoteNotification(quote, pricedItems) {
+  const { config, transporter } = makeTransporter();
 
-  const subject =
-    `New ${quote.quoteType === "machine" ? "machine" : "spare-part"} ` +
-    `quote request from ${String(quote.company || "").replace(/[\r\n]/g, " ")}`;
+  const isSparePart = quote.quoteType === "sparePart";
 
-  const body = [
+  // ── Build totals (only meaningful for spare-part quotes with items) ──────────
+  let totals = null;
+  if (isSparePart && Array.isArray(pricedItems) && pricedItems.length > 0) {
+    try {
+      totals = calculateQuotationTotals(pricedItems);
+    } catch {
+      // price lookup failed — still send without totals
+      totals = null;
+    }
+  }
+
+  // ── Plain-text body ──────────────────────────────────────────────────────────
+  const textLines = [
     "A new quote request was submitted on the UnipackAuto website.",
     "",
-    `Company  : ${quote.company}`,
-    `Contact  : ${quote.contactName}`,
-    `Email    : ${quote.email}`,
-    `Phone    : ${quote.phone}`,
-    `Location : ${quote.city}, ${quote.state}`,
-    "",
-    "── Requirement ──────────────────────────────",
-    getQuoteSummary(quote),
-    "",
-    `Message  : ${quote.message || "Not provided"}`,
-    `Attachment: ${quote.attachment?.url || "None"}`,
-    "",
-    `Request ID: ${quote.id}`,
-    "",
-    "Reply to this email to respond directly to the customer.",
-  ].join("\n");
+    `Company    : ${quote.company}`,
+    `Contact    : ${quote.contactName}`,
+    `Email      : ${quote.email}`,
+    `Phone      : ${quote.phone}`,
+    `Location   : ${quote.city}, ${quote.state}`,
+    `Request ID : ${quote.id}`,
+  ];
+
+  if (isSparePart && totals) {
+    textLines.push("", "── Spare Parts & Pricing ────────────────────────────────────────────────");
+    textLines.push(buildItemisedText(totals));
+  } else if (isSparePart && Array.isArray(pricedItems)) {
+    textLines.push("", "── Spare Parts ─────────────────────────────────────────────────────────");
+    pricedItems.forEach((p, i) => {
+      textLines.push(`${i + 1}. ${p.name} | Code: ${p.itemCode || "—"} | Qty: ${p.quantity}`);
+    });
+  } else if (!isSparePart) {
+    textLines.push(
+      "", "── Machine Requirement ─────────────────────────────────────────────────",
+      `Machine type   : ${quote.machineType}`,
+      `Model          : ${quote.model}`,
+      `Quantity       : ${quote.quantity}`,
+      `Specifications : ${quote.specifications || "Not provided"}`,
+    );
+  }
+
+  if (quote.message) textLines.push("", `Message : ${quote.message}`);
+  if (quote.attachment?.url) textLines.push(`Attachment : ${quote.attachment.url}`);
+  textLines.push("", "Reply to this email to respond directly to the customer.");
+
+  // ── HTML body ────────────────────────────────────────────────────────────────
+  const tableHtml = totals
+    ? buildItemisedTable(totals)
+    : isSparePart && Array.isArray(pricedItems)
+    ? `<ul style="margin:0;padding:0 0 0 18px;">${pricedItems
+        .map((p) => `<li style="margin:4px 0;">${esc(p.name)} &nbsp;·&nbsp; Code: ${esc(p.itemCode || "—")} &nbsp;·&nbsp; Qty: ${esc(p.quantity)}</li>`)
+        .join("")}</ul>`
+    : `<p style="color:#555;">
+        Machine: ${esc(quote.machineType)} &nbsp;·&nbsp;
+        Model: ${esc(quote.model)} &nbsp;·&nbsp;
+        Qty: ${esc(quote.quantity)}
+       </p>`;
+
+  const htmlBody = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f5f3f6;font-family:Arial,Helvetica,sans-serif;color:#29232b;">
+<div style="max-width:740px;margin:24px auto;padding:0 12px;">
+
+  <!-- Header -->
+  <div style="background:#66116f;color:#fff;padding:22px 26px;border-radius:12px 12px 0 0;">
+    <div style="font-size:11px;letter-spacing:2px;opacity:.8;text-transform:uppercase;">UnipackAuto · New Quote Request</div>
+    <h1 style="margin:8px 0 0;font-size:22px;">
+      ${esc(isSparePart ? "Spare Part Quote Request" : "Machine Quote Request")}
+    </h1>
+  </div>
+
+  <!-- Body -->
+  <div style="background:#fff;padding:24px 26px;border:1px solid #ede8f0;border-top:0;">
+    <table role="presentation" cellspacing="0" cellpadding="0"
+      style="width:100%;margin-bottom:20px;font-size:14px;border-collapse:collapse;">
+      <tr>
+        <td style="padding:6px 0;color:#777;width:140px;">Company</td>
+        <td style="padding:6px 0;font-weight:600;">${esc(quote.company)}</td>
+        <td style="padding:6px 0;color:#777;width:120px;">Contact</td>
+        <td style="padding:6px 0;">${esc(quote.contactName)}</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 0;color:#777;">Email</td>
+        <td style="padding:6px 0;"><a href="mailto:${esc(quote.email)}" style="color:#66116f;">${esc(quote.email)}</a></td>
+        <td style="padding:6px 0;color:#777;">Phone</td>
+        <td style="padding:6px 0;">${esc(quote.phone)}</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 0;color:#777;">Location</td>
+        <td style="padding:6px 0;" colspan="3">${esc(quote.city)}, ${esc(quote.state)}</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 0;color:#777;">Request ID</td>
+        <td style="padding:6px 0;font-size:12px;color:#999;" colspan="3">${esc(quote.id)}</td>
+      </tr>
+    </table>
+
+    <h2 style="font-size:15px;margin:20px 0 12px;color:#4a1155;border-bottom:2px solid #f0e8f4;padding-bottom:8px;">
+      ${esc(isSparePart ? "Spare Parts & Pricing" : "Machine Requirement")}
+    </h2>
+
+    ${tableHtml}
+
+    ${quote.message ? `<p style="margin-top:18px;padding:14px;background:#faf7fb;border-left:3px solid #66116f;font-size:13px;color:#444;">${esc(quote.message)}</p>` : ""}
+    ${quote.attachment?.url ? `<p style="font-size:12px;color:#777;margin-top:12px;">📎 Attachment: <a href="${esc(quote.attachment.url)}" style="color:#66116f;">${esc(quote.attachment.name || "View file")}</a></p>` : ""}
+
+    <p style="margin-top:24px;font-size:13px;color:#888;">
+      Reply to this email to respond directly to the customer at
+      <a href="mailto:${esc(quote.email)}" style="color:#66116f;">${esc(quote.email)}</a>.
+    </p>
+  </div>
+
+  <!-- Footer -->
+  <div style="padding:14px 20px;color:#aaa;font-size:11px;text-align:center;">
+    UnipackAuto · Packaging Automation Solutions · Bhiwadi, Rajasthan, India
+  </div>
+</div>
+</body></html>`;
 
   const info = await transporter.sendMail({
     from: `"UnipackAuto Enquiries" <${config.from}>`,
     to: config.to,
     replyTo: quote.email,
-    subject,
-    text: body,
+    subject: `New ${isSparePart ? "spare-part" : "machine"} quote from ${String(quote.company || "").replace(/[\r\n]/g, " ")} — ${quote.id}`,
+    text: textLines.join("\n"),
+    html: htmlBody,
   });
-  const accepted = (info.accepted || []).map((recipient) =>
-    typeof recipient === "string" ? recipient : recipient.address
+
+  const accepted = (info.accepted || []).map((r) =>
+    typeof r === "string" ? r : r.address
   );
-  if (!accepted.some((recipient) => recipient?.toLowerCase() === config.to.toLowerCase())) {
-    const error = new Error("SMTP did not accept the configured quote notification recipient.");
-    error.code = "RECIPIENT_NOT_ACCEPTED";
-    throw error;
+  if (!accepted.some((r) => r?.toLowerCase() === config.to.toLowerCase())) {
+    throw Object.assign(
+      new Error("SMTP did not accept the admin notification recipient."),
+      { code: "RECIPIENT_NOT_ACCEPTED" }
+    );
   }
-  return {
-    messageId: info.messageId,
-    response: info.response,
-    accepted,
-  };
+  return { messageId: info.messageId, response: info.response, accepted };
+}
+
+/** SMTP connection test — sends a plain test message to ADMIN_EMAIL. */
+export async function sendQuoteEmailTest() {
+  const { config, transporter } = makeTransporter();
+  const info = await transporter.sendMail({
+    from: `"UnipackAuto Email Test" <${config.from}>`,
+    to: config.to,
+    subject: "UnipackAuto — SMTP delivery test",
+    text: [
+      "This is a test email from the UnipackAuto quote notification service.",
+      `Recipient : ${config.to}`,
+      "If you received this, the SMTP server accepted the message.",
+      "Note: SMTP acceptance does not guarantee inbox delivery — also check Spam / All Mail.",
+    ].join("\n"),
+  });
+  const accepted = (info.accepted || []).map((r) =>
+    typeof r === "string" ? r : r.address
+  );
+  if (!accepted.some((r) => r?.toLowerCase() === config.to.toLowerCase())) {
+    throw Object.assign(
+      new Error("SMTP did not accept the configured notification recipient."),
+      { code: "RECIPIENT_NOT_ACCEPTED" }
+    );
+  }
+  return { recipient: config.to, messageId: info.messageId, response: info.response, accepted };
 }
