@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  calculateQuotationTotals,
   describeEmailFailure,
+  formatINR,
   getEmailConfiguration,
 } from "../services/quoteNotification.js";
 
@@ -69,4 +71,48 @@ test("retains custom SMTP configuration when Gmail credentials are not set", () 
     secure: true,
     auth: { user: "smtp-user", pass: "smtp-password" },
   });
+});
+
+test("calculates item totals, subtotal, 18% GST, and gross total in integer cents", () => {
+  const totals = calculateQuotationTotals([
+    { name: "Feed roller", itemCode: "FR-01", quantity: 2, unitPrice: 2500 },
+    { name: "Drive belt", itemCode: "DB-02", quantity: 2, unitPrice: 2500 },
+  ]);
+
+  assert.deepEqual(totals.items.map((item) => item.totalCents), [500000, 500000]);
+  assert.equal(totals.subtotalCents, 1000000);
+  assert.equal(totals.gstCents, 180000);
+  assert.equal(totals.grossTotalCents, 1180000);
+  assert.equal(formatINR(totals.subtotalCents), "₹10,000.00");
+  assert.equal(formatINR(totals.gstCents), "₹1,800.00");
+  assert.equal(formatINR(totals.grossTotalCents), "₹11,800.00");
+});
+
+test("rounds unit prices to paise before multiplying quantities", () => {
+  const totals = calculateQuotationTotals([
+    { name: "Precision part", quantity: 3, unitPrice: 1.005 },
+  ]);
+  assert.equal(totals.items[0].unitPriceCents, 101);
+  assert.equal(totals.subtotalCents, 303);
+  assert.equal(totals.gstCents, 55);
+  assert.equal(totals.grossTotalCents, 358);
+});
+
+test("rounds fractional paise without shifting leading zeroes", () => {
+  const totals = calculateQuotationTotals([
+    { name: "Low-price part", quantity: 1, unitPrice: 0.004 },
+  ]);
+  assert.equal(totals.items[0].unitPriceCents, 0);
+  assert.equal(totals.grossTotalCents, 0);
+});
+
+test("rejects invalid quotation quantities and prices", () => {
+  assert.throws(
+    () => calculateQuotationTotals([{ name: "Part", quantity: 0, unitPrice: 10 }]),
+    /quantity must be a whole number/
+  );
+  assert.throws(
+    () => calculateQuotationTotals([{ name: "Part", quantity: 1, unitPrice: -1 }]),
+    /price must be a valid non-negative number/
+  );
 });

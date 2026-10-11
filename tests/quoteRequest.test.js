@@ -35,11 +35,13 @@ test("quote request schema validates spare part quantities and request status", 
       machine: "Strapping / UPA-100",
       partName: "Feed roller",
       itemCode: "FR-01",
+      productId: "507f1f77bcf86cd799439011",
       quantity: 3,
     }],
   });
 
   assert.equal(request.validateSync(), undefined);
+  assert.equal(String(request.parts[0].productId), "507f1f77bcf86cd799439011");
   request.parts[0].quantity = 0;
   request.status = "awaiting";
   const validationError = request.validateSync();

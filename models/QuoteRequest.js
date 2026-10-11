@@ -5,6 +5,11 @@ const sparePartSchema = new mongoose.Schema(
     machine: { type: String, required: true, trim: true, maxlength: 300 },
     machineCategory: { type: String, trim: true, maxlength: 150, default: "" },
     machineName: { type: String, trim: true, maxlength: 150, default: "" },
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      default: null,
+    },
     partName: { type: String, required: true, trim: true, maxlength: 150 },
     itemCode: { type: String, trim: true, maxlength: 100, default: "" },
     quantity: { type: Number, required: true, min: 1, max: 100000 },
@@ -49,6 +54,12 @@ const quoteRequestSchema = new mongoose.Schema(
       default: "pending",
     },
     notificationError: { type: String, trim: true, maxlength: 500, default: "" },
+    quotation: {
+      sentAt: { type: Date, default: null },
+      subtotalCents: { type: Number, min: 0, default: null },
+      gstCents: { type: Number, min: 0, default: null },
+      grossTotalCents: { type: Number, min: 0, default: null },
+    },
   },
   { timestamps: true }
 );

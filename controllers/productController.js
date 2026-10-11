@@ -260,3 +260,27 @@ export const deleteProduct = async (req, res) => {
     return res.status(500).json({ message: "Failed to delete product.", error: error.message });
   }
 };
+
+export const deleteProductsByCategory = async (req, res) => {
+  const { categoryId } = req.params;
+  if (!/^[0-9a-fA-F]{24}$/.test(categoryId)) {
+    return res.status(400).json({ message: "A valid spare-part category is required." });
+  }
+
+  try {
+    const category = await Category.findOne({ _id: categoryId, type: "sparepart" });
+    if (!category) {
+      return res.status(404).json({ message: "Spare-part category not found." });
+    }
+
+    const result = await Product.deleteMany({ category: category._id, type: "sparepart" });
+    return res.status(200).json({
+      message: "Spare parts in the selected category deleted successfully.",
+      deletedCount: result.deletedCount,
+      category: { id: category._id, name: category.name },
+    });
+  } catch (error) {
+    console.error("Failed to delete spare parts by category:", error);
+    return res.status(500).json({ message: "Failed to delete spare parts in this category." });
+  }
+};
