@@ -218,6 +218,7 @@ const enrichPartsWithPrices = async (parts) => {
     return {
       name:      product?.name     || part.partName,
       itemCode:  product?.partCode || part.itemCode || "",
+      machine:   part.machine || "",
       quantity:  part.quantity,
       // Price stored in MongoDB as rupees (float). 0 means unknown / "price on request".
       unitPrice: typeof product?.price === "number" && product.price > 0

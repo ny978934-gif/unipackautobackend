@@ -117,6 +117,8 @@ const buildItemisedTable = (totals) => {
       <tr>
         <td style="${COL_STYLE}">${esc(i + 1)}</td>
         <td style="${COL_STYLE}">${esc(item.name)}</td>
+        <td style="${COL_STYLE}">${esc(item.machine || "—")}</td>
+        <td style="${COL_STYLE}">${esc(item.itemCode || "—")}</td>
         <td style="${COL_STYLE}text-align:right;">${esc(item.quantity)}</td>
         <td style="${COL_STYLE}text-align:right;white-space:nowrap;">${
           item.unitPrice > 0 ? formatINR(item.unitPaise) : "<em style='color:#999;'>On request</em>"
@@ -128,10 +130,10 @@ const buildItemisedTable = (totals) => {
     )
     .join("");
 
-  const summaryRow = (label, value, bold = false, accent = false) => `
+  const summaryRow = (label, value) => `
     <tr>
-      <td colspan="4" style="padding:8px 12px;text-align:right;font-size:13px;${bold ? "font-weight:700;" : "color:#555;"}${accent ? "color:#66116f;" : ""}">${esc(label)}</td>
-      <td style="padding:8px 12px;text-align:right;white-space:nowrap;font-size:13px;${bold ? "font-weight:700;" : ""}${accent ? "color:#66116f;font-size:15px;" : ""}">${value}</td>
+      <td colspan="6" style="padding:8px 12px;text-align:right;font-size:13px;color:#555;">${esc(label)}</td>
+      <td style="padding:8px 12px;text-align:right;white-space:nowrap;font-size:13px;">${value}</td>
     </tr>`;
 
   const hasPrices = totals.items.some((item) => item.unitPrice > 0);
@@ -139,11 +141,13 @@ const buildItemisedTable = (totals) => {
   return `
   <div style="overflow-x:auto;margin:20px 0;">
     <table role="table" cellspacing="0" cellpadding="0"
-      style="width:100%;min-width:560px;border-collapse:collapse;border:1px solid #ede8f0;border-radius:8px;overflow:hidden;">
+      style="width:100%;min-width:680px;border-collapse:collapse;border:1px solid #ede8f0;border-radius:8px;overflow:hidden;">
       <thead>
         <tr>
           <th style="${HEAD_STYLE}">#</th>
           <th style="${HEAD_STYLE}">Spare Part Name</th>
+          <th style="${HEAD_STYLE}">Machine</th>
+          <th style="${HEAD_STYLE}">Item Code</th>
           <th style="${HEAD_STYLE}text-align:right;">Qty</th>
           <th style="${HEAD_STYLE}text-align:right;">Unit Price</th>
           <th style="${HEAD_STYLE}text-align:right;">Line Total</th>
@@ -155,7 +159,7 @@ const buildItemisedTable = (totals) => {
         ${summaryRow("Subtotal (before GST)", formatINR(totals.subtotalPaise))}
         ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
         <tr>
-          <td colspan="4" style="padding:12px;text-align:right;font-weight:700;font-size:14px;border-top:2px solid #66116f;color:#66116f;">
+          <td colspan="6" style="padding:12px;text-align:right;font-weight:700;font-size:14px;border-top:2px solid #66116f;color:#66116f;">
             Grand Total (incl. GST)
           </td>
           <td style="padding:12px;text-align:right;white-space:nowrap;font-weight:800;font-size:17px;border-top:2px solid #66116f;color:#66116f;">
@@ -168,12 +172,12 @@ const buildItemisedTable = (totals) => {
 };
 
 const buildItemisedText = (totals) => {
-  const DIVIDER = "-".repeat(72);
+  const DIVIDER = "-".repeat(86);
   const col = (v, w) => String(v ?? "").padEnd(w).slice(0, w);
 
-  const header = `${col("#", 3)}${col("Spare Part Name", 36)}${col("Qty", 6)}${col("Unit Price", 13)}${"Line Total"}`;
+  const header = `${col("#", 3)}${col("Spare Part Name", 28)}${col("Machine", 22)}${col("Item Code", 14)}${col("Qty", 6)}${col("Unit Price", 13)}${"Line Total"}`;
   const rows = totals.items.map((item, i) =>
-    `${col(i + 1, 3)}${col(item.name, 36)}${col(item.quantity, 6)}${col(
+    `${col(i + 1, 3)}${col(item.name, 28)}${col(item.machine || "—", 22)}${col(item.itemCode || "—", 14)}${col(item.quantity, 6)}${col(
       item.unitPrice > 0 ? formatINR(item.unitPaise) : "On request", 13
     )}${item.unitPrice > 0 ? formatINR(item.totalPaise) : "—"}`
   );
