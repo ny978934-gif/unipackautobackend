@@ -4,16 +4,16 @@ import nodemailer from "nodemailer";
 
 const INR = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
 
-/** Format integer paise as ₹X,XX,XXX.XX */
-export const formatINR = (paise) => {
-  if (!Number.isSafeInteger(paise) || paise < 0) {
+/** Format an integer number of paise as ₹X,XX,XXX.XX. */
+export const formatINR = (amountInPaise) => {
+  if (!Number.isSafeInteger(amountInPaise) || amountInPaise < 0) {
     throw Object.assign(
       new Error("Currency amount must be a non-negative integer (paise)."),
       { status: 422 }
     );
   }
-  const rupees = Math.floor(paise / 100);
-  const paiseStr = String(paise % 100).padStart(2, "0");
+  const rupees = Math.floor(amountInPaise / 100);
+  const paiseStr = String(amountInPaise % 100).padStart(2, "0");
   return `\u20B9${INR.format(rupees)}.${paiseStr}`;
 };
 
@@ -38,7 +38,7 @@ const toPaise = (value) => {
 
 /**
  * items  – array of { name, itemCode, quantity, unitPrice (rupees float) }
- * Returns { items (with unitPaiseCents + totalPaise), subtotalPaise, gstPaise, grandTotalPaise }
+ * Returns item and aggregate amounts as integer paise.
  */
 export const calculateQuotationTotals = (items) => {
   if (!Array.isArray(items) || items.length === 0) {
@@ -65,10 +65,10 @@ export const calculateQuotationTotals = (items) => {
       );
     }
 
-    const unitPaise = toPaise(item.unitPrice);
-    const totalPaise = unitPaise * qty;
+    const unitPricePaise = toPaise(item.unitPrice);
+    const totalPaise = unitPricePaise * qty;
 
-    if (!Number.isSafeInteger(unitPaise) || !Number.isSafeInteger(totalPaise)) {
+    if (!Number.isSafeInteger(unitPricePaise) || !Number.isSafeInteger(totalPaise)) {
       throw Object.assign(
         new Error(`Part ${i + 1}: amount exceeds the supported limit.`),
         { status: 422 }
@@ -83,7 +83,7 @@ export const calculateQuotationTotals = (items) => {
       );
     }
 
-    return { ...item, unitPaise, totalPaise };
+    return { ...item, unitPricePaise, totalPaise };
   });
 
   // GST 18 % — round half-up using integer arithmetic
@@ -118,87 +118,189 @@ const buildItemisedTable = (totals) => {
         <td style="${COL_STYLE}">${esc(i + 1)}</td>
         <td style="${COL_STYLE}">${esc(item.name)}</td>
         <td style="${COL_STYLE}">${esc(item.machine || "—")}</td>
-        <td style="${COL_STYLE}">${esc(item.itemCode || "—")}</td>
         <td style="${COL_STYLE}text-align:right;">${esc(item.quantity)}</td>
-        <td style="${COL_STYLE}text-align:right;white-space:nowrap;">${
-          item.unitPrice > 0 ? formatINR(item.unitPaise) : "<em style='color:#999;'>On request</em>"
-        }</td>
-        <td style="${COL_STYLE}text-align:right;white-space:nowrap;">${
-          item.unitPrice > 0 ? formatINR(item.totalPaise) : "<em style='color:#999;'>—</em>"
-        }</td>
+        <td style="${COL_STYLE}text-align:right;white-space:nowrap;">${formatINR(item.unitPricePaise)}</td>
+        <td style="${COL_STYLE}text-align:right;white-space:nowrap;">${formatINR(item.totalPaise)}</td>
       </tr>`
     )
     .join("");
 
   const summaryRow = (label, value) => `
     <tr>
-      <td colspan="6" style="padding:8px 12px;text-align:right;font-size:13px;color:#555;">${esc(label)}</td>
+      <td colspan="5" style="padding:8px 12px;text-align:right;font-size:13px;color:#555;">${esc(label)}</td>
       <td style="padding:8px 12px;text-align:right;white-space:nowrap;font-size:13px;">${value}</td>
     </tr>`;
 
-  const hasPrices = totals.items.some((item) => item.unitPrice > 0);
-
   return `
-  <div style="overflow-x:auto;margin:20px 0;">
+  <div style="margin:20px 0;">
     <table role="table" cellspacing="0" cellpadding="0"
-      style="width:100%;min-width:680px;border-collapse:collapse;border:1px solid #ede8f0;border-radius:8px;overflow:hidden;">
+      style="width:100%;border-collapse:collapse;border:1px solid #ede8f0;border-radius:8px;overflow:hidden;">
       <thead>
         <tr>
-          <th style="${HEAD_STYLE}">#</th>
-          <th style="${HEAD_STYLE}">Spare Part Name</th>
-          <th style="${HEAD_STYLE}">Machine</th>
-          <th style="${HEAD_STYLE}">Item Code</th>
-          <th style="${HEAD_STYLE}text-align:right;">Qty</th>
-          <th style="${HEAD_STYLE}text-align:right;">Unit Price</th>
-          <th style="${HEAD_STYLE}text-align:right;">Line Total</th>
+          <th style="${HEAD_STYLE}">S. No.</th>
+          <th style="${HEAD_STYLE}">Spare Part Description</th>
+          <th style="${HEAD_STYLE}">Machine/Application</th>
+          <th style="${HEAD_STYLE}text-align:right;">Quantity</th>
+          <th style="${HEAD_STYLE}text-align:right;">Unit Price (₹)</th>
+          <th style="${HEAD_STYLE}text-align:right;">Total (₹)</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
-      ${hasPrices ? `
       <tfoot style="border-top:2px solid #ede8f0;">
-        ${summaryRow("Subtotal (before GST)", formatINR(totals.subtotalPaise))}
+        ${summaryRow("Subtotal", formatINR(totals.subtotalPaise))}
         ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
         <tr>
-          <td colspan="6" style="padding:12px;text-align:right;font-weight:700;font-size:14px;border-top:2px solid #66116f;color:#66116f;">
-            Grand Total (incl. GST)
+          <td colspan="5" style="padding:12px;text-align:right;font-weight:700;font-size:14px;border-top:2px solid #66116f;color:#66116f;">
+            Grand Total (Including GST)
           </td>
           <td style="padding:12px;text-align:right;white-space:nowrap;font-weight:800;font-size:17px;border-top:2px solid #66116f;color:#66116f;">
             ${formatINR(totals.grandTotalPaise)}
           </td>
         </tr>
-      </tfoot>` : ""}
+      </tfoot>
     </table>
   </div>`;
 };
 
-const buildItemisedText = (totals) => {
-  const DIVIDER = "-".repeat(86);
-  const col = (v, w) => String(v ?? "").padEnd(w).slice(0, w);
+const formatQuotationDate = (date) =>
+  new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  }).format(date);
 
-  const header = `${col("#", 3)}${col("Spare Part Name", 28)}${col("Machine", 22)}${col("Item Code", 14)}${col("Qty", 6)}${col("Unit Price", 13)}${"Line Total"}`;
-  const rows = totals.items.map((item, i) =>
-    `${col(i + 1, 3)}${col(item.name, 28)}${col(item.machine || "—", 22)}${col(item.itemCode || "—", 14)}${col(item.quantity, 6)}${col(
-      item.unitPrice > 0 ? formatINR(item.unitPaise) : "On request", 13
-    )}${item.unitPrice > 0 ? formatINR(item.totalPaise) : "—"}`
-  );
+export const createQuotationNumber = (requestId, date = new Date()) => {
+  if (!requestId) throw new Error("A saved quote request ID is required for the quotation number.");
+  const monthYear = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "2-digit",
+    timeZone: "Asia/Kolkata",
+  }).format(date).replace(" ", "-");
+  return `UPK/Spare/Quote/${monthYear}/${requestId}`;
+};
 
-  const hasPrices = totals.items.some((item) => item.unitPrice > 0);
+const commercialTerms = [
+  "GST: 18% Extra or as actual as per Govt. Norms .",
+  "Freight Charges: Extra, as applicable.",
+  "Payment Terms: 100% advance payment against the proforma invoice.",
+  "Dispatch: The spare parts will be dispatched after receipt of payment confirmation.",
+  "Technical Support: Our technical team will contact you, if required, to discuss your requirements and provide further assistance.",
+];
 
-  return [
-    DIVIDER,
-    header,
-    DIVIDER,
-    ...rows,
-    DIVIDER,
-    ...(hasPrices
-      ? [
-          `${"Subtotal (before GST):".padStart(58)} ${formatINR(totals.subtotalPaise)}`,
-          `${"GST @ 18%:".padStart(58)} ${formatINR(totals.gstPaise)}`,
-          `${"Grand Total (incl. GST):".padStart(58)} ${formatINR(totals.grandTotalPaise)}`,
-          DIVIDER,
-        ]
-      : []),
-  ].join("\n");
+const bankDetails = [
+  ["Account Holder's Name", "UNIPACKAUTO INDIA PRIVATE LIMITED"],
+  ["Bank Name", "ICICI Bank"],
+  ["Current Account No.", "174405500608"],
+  ["Branch", "Tapukera"],
+  ["IFSC Code", "ICIC0001744"],
+];
+
+export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, issuedAt = new Date()) => {
+  const date = formatQuotationDate(issuedAt);
+  const subject = `Quotation for Spare Parts – Unipackauto India Pvt. Ltd. – ${quotationNumber}`;
+  const textLines = [
+    "Dear Sir/Madam,",
+    "",
+    "Thank you for your enquiry regarding spare parts.",
+    "Please find below our offer for the required spare parts:",
+    "",
+    "Spare Parts Quotation",
+    `Quotation Number: ${quotationNumber}`,
+    `Date: ${date}`,
+    `Company Name: ${quote.company}`,
+    `Contact Person: ${quote.contactName}`,
+    `Email: ${quote.email}`,
+    `Phone: ${quote.phone}`,
+    `Location: ${quote.city}, ${quote.state}`,
+    `Request ID: ${quote.id}`,
+    "",
+    "S. No. | Spare Part Description | Machine/Application | Quantity | Unit Price (₹) | Total (₹)",
+    ...totals.items.map((item, index) =>
+      `${index + 1} | ${item.name} | ${item.machine || "—"} | ${item.quantity} | ${formatINR(item.unitPricePaise)} | ${formatINR(item.totalPaise)}`
+    ),
+    `Subtotal: ${formatINR(totals.subtotalPaise)}`,
+    `GST @ 18%: ${formatINR(totals.gstPaise)}`,
+    `Grand Total (Including GST): ${formatINR(totals.grandTotalPaise)}`,
+    "",
+    "Commercial Terms & Conditions:",
+    ...commercialTerms.map((term, index) => `${index + 1}. ${term}`),
+    "",
+    "Bank Details for Payment",
+    ...bankDetails.map(([label, value]) => `${label}: ${value}`),
+    "",
+    "Kindly arrange the payment to enable us to process your order and dispatch the spare parts.",
+    "For any further assistance or technical clarification, please feel free to contact our team.",
+    "We look forward to your valuable order and assure you of our best services.",
+    "",
+    "Best regards,",
+    "Spare Parts Division",
+    "Unipackauto India Pvt. Ltd.",
+    "Contact Numbers: 9215521314, 7232001235, 9991226074",
+    "Email Addresses:",
+    "info@unipackauto.in",
+    "services.upa@gmail.com",
+    "uniquepackagingandautomation@gmail.com",
+  ];
+  if (quote.message) textLines.push("", `Customer message: ${quote.message}`);
+  if (quote.attachment?.url) textLines.push(`Attachment: ${quote.attachment.url}`);
+
+  const termsHtml = commercialTerms
+    .map((term) => {
+      const separator = term.indexOf(":");
+      return `<li style="margin:0 0 8px;"><strong>${esc(term.slice(0, separator + 1))}</strong>${esc(term.slice(separator + 1))}</li>`;
+    })
+    .join("");
+  const bankHtml = bankDetails
+    .map(([label, value]) => `<tr><td style="padding:5px 12px 5px 0;color:#666;">${esc(label)}</td><td style="padding:5px 0;font-weight:600;">${esc(value)}</td></tr>`)
+    .join("");
+
+  const html = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#25232a;">
+  <div style="max-width:820px;margin:24px auto;padding:0 12px;">
+    <div style="overflow:hidden;border-radius:12px;background:#fff;box-shadow:0 4px 18px rgba(25,20,30,.08);">
+      <header style="padding:24px 30px;background:#66116f;color:#fff;">
+        <div style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase;">UnipackAuto India Pvt. Ltd.</div>
+        <h1 style="margin:10px 0 4px;font-size:24px;">Spare Parts Quotation</h1>
+        <div style="font-size:13px;color:#f0e5f2;">Quotation No.: ${esc(quotationNumber)}</div>
+      </header>
+      <main style="padding:28px 30px;">
+        <p style="margin:0 0 12px;">Dear Sir/Madam,</p>
+        <p style="margin:0 0 8px;">Thank you for your enquiry regarding spare parts.</p>
+        <p style="margin:0 0 22px;">Please find below our offer for the required spare parts:</p>
+        <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;margin:0 0 22px;border-collapse:collapse;font-size:13px;">
+          <tr><td style="padding:7px 10px 7px 0;color:#777;">Company Name</td><td style="padding:7px 10px 7px 0;font-weight:600;">${esc(quote.company)}</td><td style="padding:7px 10px 7px 0;color:#777;">Contact Person</td><td style="padding:7px 0;">${esc(quote.contactName)}</td></tr>
+          <tr><td style="padding:7px 10px 7px 0;color:#777;">Email</td><td style="padding:7px 10px 7px 0;"><a href="mailto:${esc(quote.email)}" style="color:#66116f;">${esc(quote.email)}</a></td><td style="padding:7px 10px 7px 0;color:#777;">Phone</td><td style="padding:7px 0;">${esc(quote.phone)}</td></tr>
+          <tr><td style="padding:7px 10px 7px 0;color:#777;">Location</td><td style="padding:7px 10px 7px 0;">${esc(quote.city)}, ${esc(quote.state)}</td><td style="padding:7px 10px 7px 0;color:#777;">Date</td><td style="padding:7px 0;">${esc(date)}</td></tr>
+          <tr><td style="padding:7px 10px 7px 0;color:#777;">Request ID</td><td style="padding:7px 10px 7px 0;font-size:12px;" colspan="3">${esc(quote.id)}</td></tr>
+        </table>
+        ${buildItemisedTable(totals)}
+        <h2 style="margin:26px 0 12px;padding-bottom:8px;border-bottom:2px solid #eee6f0;color:#4a1155;font-size:16px;">Commercial Terms &amp; Conditions</h2>
+        <ol style="margin:0;padding-left:22px;font-size:13px;line-height:1.55;">${termsHtml}</ol>
+        <h2 style="margin:26px 0 12px;padding-bottom:8px;border-bottom:2px solid #eee6f0;color:#4a1155;font-size:16px;">Bank Details for Payment</h2>
+        <table role="presentation" cellspacing="0" cellpadding="0" style="font-size:13px;">${bankHtml}</table>
+        <p style="margin:22px 0 8px;font-size:13px;line-height:1.55;">Kindly arrange the payment to enable us to process your order and dispatch the spare parts.</p>
+        <p style="margin:0 0 8px;font-size:13px;line-height:1.55;">For any further assistance or technical clarification, please feel free to contact our team.</p>
+        <p style="margin:0 0 22px;font-size:13px;line-height:1.55;">We look forward to your valuable order and assure you of our best services.</p>
+        ${quote.message ? `<p style="margin:18px 0;padding:14px;background:#faf7fb;border-left:3px solid #66116f;font-size:13px;color:#444;"><strong>Customer message:</strong><br>${esc(quote.message)}</p>` : ""}
+        ${quote.attachment?.url ? `<p style="font-size:12px;color:#777;margin-top:12px;">Attachment: <a href="${esc(quote.attachment.url)}" style="color:#66116f;">${esc(quote.attachment.name || "View file")}</a></p>` : ""}
+        <p style="margin:0;font-size:13px;line-height:1.6;">Best regards,<br><strong>Spare Parts Division</strong><br><strong>Unipackauto India Pvt. Ltd.</strong></p>
+      </main>
+      <footer style="padding:18px 30px;background:#f8f6f9;border-top:1px solid #eee6f0;font-size:12px;line-height:1.8;">
+        <strong>Contact Numbers:</strong> 9215521314, 7232001235, 9991226074<br>
+        <strong>Email Addresses:</strong>
+        <a href="mailto:info@unipackauto.in" style="color:#66116f;">info@unipackauto.in</a> ·
+        <a href="mailto:services.upa@gmail.com" style="color:#66116f;">services.upa@gmail.com</a> ·
+        <a href="mailto:uniquepackagingandautomation@gmail.com" style="color:#66116f;">uniquepackagingandautomation@gmail.com</a>
+      </footer>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  return { subject, text: textLines.join("\n"), html, date, quotationNumber };
 };
 
 // ── SMTP transport factory ────────────────────────────────────────────────────
@@ -308,86 +410,51 @@ export async function verifyQuoteEmail() {
  *
  * @param {object}   quote      – saved QuoteRequest document
  * @param {Array}    [pricedItems] – optional pre-enriched items from MongoDB price lookup
- *   Each item: { name, itemCode, quantity, unitPrice (rupees float, 0 = unknown) }
+ *   Each item: { name, itemCode, machine, quantity, unitPrice (rupees from MongoDB) }
  */
-export async function sendQuoteNotification(quote, pricedItems) {
+export async function sendQuoteNotification(quote, pricedItems, quotationOptions = {}) {
   const { config, transporter } = makeTransporter();
-
   const isSparePart = quote.quoteType === "sparePart";
-
-  // ── Build totals (only meaningful for spare-part quotes with items) ──────────
   let totals = null;
-  if (isSparePart && Array.isArray(pricedItems) && pricedItems.length > 0) {
-    try {
-      totals = calculateQuotationTotals(pricedItems);
-    } catch {
-      // price lookup failed — still send without totals
-      totals = null;
-    }
-  }
-
-  // ── Plain-text body ──────────────────────────────────────────────────────────
-  const textLines = [
-    "A new quote request was submitted on the UnipackAuto website.",
-    "",
-    `Company    : ${quote.company}`,
-    `Contact    : ${quote.contactName}`,
-    `Email      : ${quote.email}`,
-    `Phone      : ${quote.phone}`,
-    `Location   : ${quote.city}, ${quote.state}`,
-    `Request ID : ${quote.id}`,
-  ];
-
-  if (isSparePart && totals) {
-    textLines.push("", "── Spare Parts & Pricing ────────────────────────────────────────────────");
-    textLines.push(buildItemisedText(totals));
-  } else if (isSparePart && Array.isArray(pricedItems)) {
-    textLines.push("", "── Spare Parts ─────────────────────────────────────────────────────────");
-    pricedItems.forEach((p, i) => {
-      textLines.push(`${i + 1}. ${p.name} | Code: ${p.itemCode || "—"} | Qty: ${p.quantity}`);
-    });
-  } else if (!isSparePart) {
-    textLines.push(
-      "", "── Machine Requirement ─────────────────────────────────────────────────",
+  let email;
+  if (isSparePart) {
+    totals = calculateQuotationTotals(pricedItems);
+    const issuedAt = quotationOptions.issuedAt || new Date();
+    const quotationNumber =
+      quotationOptions.quotationNumber || createQuotationNumber(quote.id || quote._id, issuedAt);
+    email = buildSparePartsQuotationEmail(quote, totals, quotationNumber, issuedAt);
+  } else {
+    const textLines = [
+      "A new machine quote request was submitted on the UnipackAuto website.",
+      "",
+      `Company    : ${quote.company}`,
+      `Contact    : ${quote.contactName}`,
+      `Email      : ${quote.email}`,
+      `Phone      : ${quote.phone}`,
+      `Location   : ${quote.city}, ${quote.state}`,
+      `Request ID : ${quote.id}`,
+      "",
+      "Machine Requirement",
       `Machine type   : ${quote.machineType}`,
       `Model          : ${quote.model}`,
       `Quantity       : ${quote.quantity}`,
       `Specifications : ${quote.specifications || "Not provided"}`,
-    );
-  }
+    ];
+    if (quote.message) textLines.push("", `Message: ${quote.message}`);
+    if (quote.attachment?.url) textLines.push(`Attachment: ${quote.attachment.url}`);
 
-  if (quote.message) textLines.push("", `Message : ${quote.message}`);
-  if (quote.attachment?.url) textLines.push(`Attachment : ${quote.attachment.url}`);
-  textLines.push("", "Reply to this email to respond directly to the customer.");
-
-  // ── HTML body ────────────────────────────────────────────────────────────────
-  const tableHtml = totals
-    ? buildItemisedTable(totals)
-    : isSparePart && Array.isArray(pricedItems)
-    ? `<ul style="margin:0;padding:0 0 0 18px;">${pricedItems
-        .map((p) => `<li style="margin:4px 0;">${esc(p.name)} &nbsp;·&nbsp; Code: ${esc(p.itemCode || "—")} &nbsp;·&nbsp; Qty: ${esc(p.quantity)}</li>`)
-        .join("")}</ul>`
-    : `<p style="color:#555;">
-        Machine: ${esc(quote.machineType)} &nbsp;·&nbsp;
-        Model: ${esc(quote.model)} &nbsp;·&nbsp;
-        Qty: ${esc(quote.quantity)}
-       </p>`;
-
-  const htmlBody = `<!doctype html>
+    email = {
+      subject: `New machine quote from ${String(quote.company || "").replace(/[\r\n]/g, " ")} — ${quote.id}`,
+      text: textLines.join("\n"),
+      html: `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;background:#f5f3f6;font-family:Arial,Helvetica,sans-serif;color:#29232b;">
 <div style="max-width:740px;margin:24px auto;padding:0 12px;">
-
-  <!-- Header -->
   <div style="background:#66116f;color:#fff;padding:22px 26px;border-radius:12px 12px 0 0;">
-    <div style="font-size:11px;letter-spacing:2px;opacity:.8;text-transform:uppercase;">UnipackAuto · New Quote Request</div>
-    <h1 style="margin:8px 0 0;font-size:22px;">
-      ${esc(isSparePart ? "Spare Part Quote Request" : "Machine Quote Request")}
-    </h1>
+    <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;">UnipackAuto · New Quote Request</div>
+    <h1 style="margin:8px 0 0;font-size:22px;">Machine Quote Request</h1>
   </div>
-
-  <!-- Body -->
   <div style="background:#fff;padding:24px 26px;border:1px solid #ede8f0;border-top:0;">
     <table role="presentation" cellspacing="0" cellpadding="0"
       style="width:100%;margin-bottom:20px;font-size:14px;border-collapse:collapse;">
@@ -408,40 +475,34 @@ export async function sendQuoteNotification(quote, pricedItems) {
         <td style="padding:6px 0;" colspan="3">${esc(quote.city)}, ${esc(quote.state)}</td>
       </tr>
       <tr>
+        <td style="padding:6px 0;color:#777;">Date</td>
+        <td style="padding:6px 0;" colspan="3">${esc(formatQuotationDate(new Date()))}</td>
+      </tr>
+      <tr>
         <td style="padding:6px 0;color:#777;">Request ID</td>
         <td style="padding:6px 0;font-size:12px;color:#999;" colspan="3">${esc(quote.id)}</td>
       </tr>
     </table>
-
-    <h2 style="font-size:15px;margin:20px 0 12px;color:#4a1155;border-bottom:2px solid #f0e8f4;padding-bottom:8px;">
-      ${esc(isSparePart ? "Spare Parts & Pricing" : "Machine Requirement")}
-    </h2>
-
-    ${tableHtml}
-
+    <h2 style="font-size:15px;margin:20px 0 12px;color:#4a1155;">Machine Requirement</h2>
+    <p>Machine: ${esc(quote.machineType)} · Model: ${esc(quote.model)} · Quantity: ${esc(quote.quantity)}</p>
+    <p>Specifications: ${esc(quote.specifications || "Not provided")}</p>
     ${quote.message ? `<p style="margin-top:18px;padding:14px;background:#faf7fb;border-left:3px solid #66116f;font-size:13px;color:#444;">${esc(quote.message)}</p>` : ""}
     ${quote.attachment?.url ? `<p style="font-size:12px;color:#777;margin-top:12px;">📎 Attachment: <a href="${esc(quote.attachment.url)}" style="color:#66116f;">${esc(quote.attachment.name || "View file")}</a></p>` : ""}
-
-    <p style="margin-top:24px;font-size:13px;color:#888;">
-      Reply to this email to respond directly to the customer at
-      <a href="mailto:${esc(quote.email)}" style="color:#66116f;">${esc(quote.email)}</a>.
-    </p>
+    <p style="margin-top:24px;font-size:13px;color:#888;">Reply to this email to respond directly to the customer at <a href="mailto:${esc(quote.email)}" style="color:#66116f;">${esc(quote.email)}</a>.</p>
   </div>
-
-  <!-- Footer -->
-  <div style="padding:14px 20px;color:#aaa;font-size:11px;text-align:center;">
-    UnipackAuto · Packaging Automation Solutions · Bhiwadi, Rajasthan, India
-  </div>
+  <div style="padding:14px 20px;color:#aaa;font-size:11px;text-align:center;">UnipackAuto · Packaging Automation Solutions · Bhiwadi, Rajasthan, India</div>
 </div>
-</body></html>`;
+ </body></html>`,
+    };
+  }
 
   const info = await transporter.sendMail({
     from: `"UnipackAuto Enquiries" <${config.from}>`,
     to: config.to,
     replyTo: quote.email,
-    subject: `New ${isSparePart ? "spare-part" : "machine"} quote from ${String(quote.company || "").replace(/[\r\n]/g, " ")} — ${quote.id}`,
-    text: textLines.join("\n"),
-    html: htmlBody,
+    subject: email.subject,
+    text: email.text,
+    html: email.html,
   });
 
   const accepted = (info.accepted || []).map((r) =>
@@ -453,7 +514,12 @@ export async function sendQuoteNotification(quote, pricedItems) {
       { code: "RECIPIENT_NOT_ACCEPTED" }
     );
   }
-  return { messageId: info.messageId, response: info.response, accepted };
+  return {
+    messageId: info.messageId,
+    response: info.response,
+    accepted,
+    ...(totals ? { totals, quotationNumber: email.quotationNumber } : {}),
+  };
 }
 
 /** SMTP connection test — sends a plain test message to ADMIN_EMAIL. */

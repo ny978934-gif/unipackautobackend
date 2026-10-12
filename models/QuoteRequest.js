@@ -55,6 +55,7 @@ const quoteRequestSchema = new mongoose.Schema(
     },
     notificationError: { type: String, trim: true, maxlength: 500, default: "" },
     quotation: {
+      number: { type: String, trim: true, maxlength: 120, default: "" },
       sentAt: { type: Date, default: null },
       subtotalCents: { type: Number, min: 0, default: null },
       gstCents: { type: Number, min: 0, default: null },

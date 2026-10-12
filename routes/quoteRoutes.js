@@ -10,6 +10,7 @@ import { requireAdmin } from "../middleware/adminAuth.js";
 import cloudinary, { isConfigured } from "../config/cloudinary.js";
 import { uploadsDirectory } from "../config/uploads.js";
 import {
+  createQuotationNumber,
   describeEmailFailure,
   sendQuoteNotification,
 } from "../services/quoteNotification.js";
@@ -187,9 +188,7 @@ const storeAttachment = async (req, file) => {
  * from MongoDB using the productId the frontend sent.
  *
  * Returns an array ready for sendQuoteNotification / calculateQuotationTotals:
- *   { name, itemCode, quantity, unitPrice (rupees float, 0 = not found) }
- *
- * Never throws — missing prices fall back to 0 so the email still sends.
+ *   { name, itemCode, quantity, unitPrice (rupees from the catalogue) }
  */
 const enrichPartsWithPrices = async (parts) => {
   // Collect distinct valid ObjectIds
@@ -200,11 +199,14 @@ const enrichPartsWithPrices = async (parts) => {
         .filter((id) => id && mongoose.isValidObjectId(id))
     ),
   ];
+  if (parts.some((part) => !part.productId || !mongoose.isValidObjectId(part.productId))) {
+    throw new Error("Every spare part must be selected from the current catalogue.");
+  }
 
   // Fetch all in one query
   const products = validIds.length
     ? await Product.find(
-        { _id: { $in: validIds } },
+        { _id: { $in: validIds }, type: "sparepart" },
         { _id: 1, name: 1, partCode: 1, price: 1 }
       ).lean()
     : [];
@@ -213,17 +215,18 @@ const enrichPartsWithPrices = async (parts) => {
     products.map((p) => [String(p._id), p])
   );
 
-  return parts.map((part) => {
+  return parts.map((part, index) => {
     const product = part.productId ? priceMap.get(String(part.productId)) : null;
+    if (!product || typeof product.price !== "number" || !Number.isFinite(product.price) || product.price <= 0) {
+      throw new Error(`A catalogue price is not configured for spare part ${index + 1}.`);
+    }
     return {
-      name:      product?.name     || part.partName,
-      itemCode:  product?.partCode || part.itemCode || "",
+      name:      product.name,
+      itemCode:  product.partCode || part.itemCode || "",
       machine:   part.machine || "",
       quantity:  part.quantity,
-      // Price stored in MongoDB as rupees (float). 0 means unknown / "price on request".
-      unitPrice: typeof product?.price === "number" && product.price > 0
-        ? product.price
-        : 0,
+      // Never accept pricing from the submitted form; catalogue prices are authoritative.
+      unitPrice: product.price,
     };
   });
 };
@@ -244,20 +247,36 @@ router.post("/", parseAttachment, async (req, res) => {
 
     // ── Enrich spare-part rows with catalogue prices from MongoDB ──────────────
     let pricedItems = null;
+    let pricingError = null;
     if (savedQuote.quoteType === "sparePart" && savedQuote.parts?.length) {
       try {
         pricedItems = await enrichPartsWithPrices(savedQuote.parts);
       } catch (err) {
-        // Non-fatal — log and continue without prices
+        pricingError = err;
         console.warn("Price lookup failed for quote", savedQuote.id, err.message);
       }
     }
 
     let notificationSent = true;
     try {
-      const emailInfo = await sendQuoteNotification(savedQuote, pricedItems);
+      if (pricingError) throw pricingError;
+      const issuedAt = new Date();
+      const quotationNumber = savedQuote.quoteType === "sparePart"
+        ? createQuotationNumber(savedQuote.id, issuedAt)
+        : undefined;
+      const emailInfo = await sendQuoteNotification(savedQuote, pricedItems, {
+        quotationNumber,
+        issuedAt,
+      });
       savedQuote.notificationStatus = "sent";
       savedQuote.notificationError = "";
+      if (emailInfo.totals && quotationNumber) {
+        savedQuote.quotation.number = quotationNumber;
+        savedQuote.quotation.sentAt = issuedAt;
+        savedQuote.quotation.subtotalCents = emailInfo.totals.subtotalPaise;
+        savedQuote.quotation.gstCents = emailInfo.totals.gstPaise;
+        savedQuote.quotation.grossTotalCents = emailInfo.totals.grandTotalPaise;
+      }
       console.info(`Quote notification sent for ${savedQuote.id}:`, {
         messageId: emailInfo.messageId,
         accepted:  emailInfo.accepted,
