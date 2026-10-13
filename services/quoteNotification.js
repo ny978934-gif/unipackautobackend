@@ -194,7 +194,7 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
     "Spare Parts Division",
     "Unipackauto India Pvt. Ltd.",
     "Phone: 9215521314 | 7232001235 | 9991226074",
-    "Email: info@unipackauto.in | services.upa@gmail.com | uniquepackagingandautomation@gmail.com",
+    "Email: info@unipackauto.in | spare@unipackauto.com",
   ];
   if (quote.message) {
     textLines.splice(textLines.indexOf("Dear Sir/Madam,"), 0, `Customer Message: ${quote.message}`, "");
@@ -397,9 +397,7 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
     <span>📞 9215521314 &nbsp;|&nbsp; 7232001235 &nbsp;|&nbsp; 9991226074</span><br>
     <a href="mailto:info@unipackauto.in" style="color:#f5d6fb;">info@unipackauto.in</a>
     &nbsp;·&nbsp;
-    <a href="mailto:services.upa@gmail.com" style="color:#f5d6fb;">services.upa@gmail.com</a>
-    &nbsp;·&nbsp;
-    <a href="mailto:uniquepackagingandautomation@gmail.com" style="color:#f5d6fb;">uniquepackagingandautomation@gmail.com</a>
+    <a href="mailto:spare@unipackauto.com" style="color:#f5d6fb;">spare@unipackauto.com</a>
   </footer>
 
 </div>
