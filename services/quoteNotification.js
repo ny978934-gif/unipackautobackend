@@ -111,58 +111,46 @@ const HEAD_STYLE = "padding:12px 10px;background:#f7f2f8;font-size:11px;font-wei
 const buildItemisedTable = (totals) => {
   const rows = totals.items
     .map((item, i) => `
-      <tr style="page-break-inside:avoid;break-inside:avoid;background:${i % 2 ? "#fcfafd" : "#ffffff"};">
-        <td style="${COL_STYLE}text-align:center;color:#687185;">${esc(i + 1)}</td>
-        <td style="${COL_STYLE}font-weight:600;word-break:break-word;">${esc(item.name)}</td>
-        <td style="${COL_STYLE}color:#50576a;word-break:break-word;">${esc(item.machine || "—")}</td>
-        <td style="${COL_STYLE}color:#50576a;">${esc(item.itemCode || "—")}</td>
-        <td style="${COL_STYLE}text-align:right;">${esc(item.quantity)}</td>
-        <td style="${COL_STYLE}text-align:right;white-space:nowrap;">${formatINR(item.unitPricePaise)}</td>
-        <td style="${COL_STYLE}text-align:right;white-space:nowrap;font-weight:600;">${formatINR(item.totalPaise)}</td>
+      <tr>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="center" valign="top" style="${COL_STYLE}color:#687185;">${esc(i + 1)}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" valign="top" style="${COL_STYLE}font-weight:bold;word-break:break-word;">${esc(item.name)}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" valign="top" style="${COL_STYLE}color:#50576a;word-break:break-word;">${esc(item.machine || "—")}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" valign="top" style="${COL_STYLE}color:#50576a;">${esc(item.itemCode || "—")}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}">${esc(item.quantity)}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">${formatINR(item.unitPricePaise)}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;font-weight:bold;">${formatINR(item.totalPaise)}</td>
       </tr>`)
     .join("");
 
   const summaryRow = (label, value) => `
-    <tr style="page-break-inside:avoid;break-inside:avoid;">
-      <td colspan="6" style="padding:9px 10px;text-align:right;font-size:13px;color:#687185;">${esc(label)}</td>
-      <td style="padding:9px 10px;text-align:right;white-space:nowrap;font-size:13px;color:#243047;">${value}</td>
+    <tr>
+      <td colspan="6" align="right" style="padding:9px 10px;font-size:13px;color:#687185;border-top:1px solid #eee6f0;">${esc(label)}</td>
+      <td align="right" style="padding:9px 10px;white-space:nowrap;font-size:13px;color:#243047;border-top:1px solid #eee6f0;">${value}</td>
     </tr>`;
 
   return `
-  <div class="table-wrap" style="margin:20px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;">
-    <table role="table" cellspacing="0" cellpadding="0"
-      style="width:100%;min-width:640px;table-layout:fixed;border-collapse:collapse;border:1px solid #ede8f0;">
-      <colgroup>
-        <col style="width:7%"><col style="width:29%"><col style="width:20%"><col style="width:10%">
-        <col style="width:8%"><col style="width:13%"><col style="width:13%">
-      </colgroup>
-      <thead style="display:table-header-group;">
-        <tr>
-          <th style="${HEAD_STYLE}text-align:center;">S. No.</th>
-          <th style="${HEAD_STYLE}">Spare Part Description</th>
-          <th style="${HEAD_STYLE}">Machine / Application</th>
-          <th style="${HEAD_STYLE}">Item Code</th>
-          <th style="${HEAD_STYLE}text-align:right;">Qty</th>
-          <th style="${HEAD_STYLE}text-align:right;">Unit Price (₹)</th>
-          <th style="${HEAD_STYLE}text-align:right;">Total (₹)</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-        <tr><td colspan="7" style="height:0;border-top:2px solid #ede8f0;padding:0;font-size:0;line-height:0;">&nbsp;</td></tr>
-        ${summaryRow("Subtotal", formatINR(totals.subtotalPaise))}
-        ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
-        <tr style="page-break-inside:avoid;break-inside:avoid;background:#faf5fb;">
-          <td colspan="6" style="padding:14px 10px;text-align:right;font-weight:700;font-size:14px;border-top:2px solid #66116f;color:#66116f;">
-            Grand Total (Including GST)
-          </td>
-          <td style="padding:14px 10px;text-align:right;white-space:nowrap;font-weight:800;font-size:17px;border-top:2px solid #66116f;color:#66116f;">
-            ${formatINR(totals.grandTotalPaise)}
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </div>`;
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:20px 0;border-collapse:collapse;border:1px solid #ede8f0;">
+    <thead>
+      <tr>
+        <th width="7%"  align="center" bgcolor="#f7f2f8" style="${HEAD_STYLE}">S. No.</th>
+        <th width="29%" align="left"   bgcolor="#f7f2f8" style="${HEAD_STYLE}">Spare Part Description</th>
+        <th width="20%" align="left"   bgcolor="#f7f2f8" style="${HEAD_STYLE}">Machine / Application</th>
+        <th width="10%" align="left"   bgcolor="#f7f2f8" style="${HEAD_STYLE}">Item Code</th>
+        <th width="8%"  align="right"  bgcolor="#f7f2f8" style="${HEAD_STYLE}">Qty</th>
+        <th width="13%" align="right"  bgcolor="#f7f2f8" style="${HEAD_STYLE}">Unit Price (₹)</th>
+        <th width="13%" align="right"  bgcolor="#f7f2f8" style="${HEAD_STYLE}">Total (₹)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      ${summaryRow("Subtotal", formatINR(totals.subtotalPaise))}
+      ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
+      <tr>
+        <td colspan="6" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Grand Total (Including GST)</td>
+        <td align="right" bgcolor="#faf5fb" style="padding:14px 10px;white-space:nowrap;font-weight:bold;font-size:17px;border-top:2px solid #66116f;color:#66116f;">${formatINR(totals.grandTotalPaise)}</td>
+      </tr>
+    </tbody>
+  </table>`;
 };
 
 const formatQuotationDate = (date) =>
@@ -261,82 +249,95 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
     .join("");
 
   const html = `<!doctype html>
-<html lang="en">
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <!--[if mso]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml><![endif]-->
   <style>
     body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    @media print {
-      thead { display: table-header-group; }
-      tr, li { page-break-inside: avoid; break-inside: avoid; }
-      h2 { page-break-after: avoid; }
-    }
+    @media print { thead { display: table-header-group; } tr { page-break-inside: avoid; break-inside: avoid; } }
     @media only screen and (max-width: 600px) {
       .main-pad { padding: 20px 14px !important; }
       .cust td { display: block !important; width: 100% !important; box-sizing: border-box; }
-      .cust td.lbl { padding-bottom: 0 !important; border-bottom: 0 !important; font-size: 11px !important; }
     }
   </style>
 </head>
-<body style="margin:0;padding:0;background:#f1f3f8;font-family:Arial,Helvetica,sans-serif;color:#243047;">
-  <div style="max-width:820px;margin:0 auto;padding:28px 12px;">
-    <div style="overflow:hidden;border:1px solid #e3e7ef;border-radius:16px;background:#fff;box-shadow:0 12px 36px rgba(31,42,68,.12);">
-      <header style="padding:30px 28px 26px;text-align:center;background:#66116f;background-image:linear-gradient(135deg,#4a0d54,#76277c);color:#fff;">
-        <div style="font-size:12px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:#ead9ef;">Unipackauto India Pvt. Ltd.</div>
-        <div style="display:inline-block;margin:14px 0 10px;padding:7px 16px;border:1px solid rgba(255,255,255,.35);border-radius:8px;background:rgba(255,255,255,.12);font-size:13px;color:#fff;word-break:break-all;">${esc(quotationNumber)}</div>
-        <h1 style="margin:0 0 6px;font-size:30px;line-height:1.2;color:#fff;">Spare Part Quotation</h1>
+<body style="margin:0;padding:0;background-color:#f1f3f8;font-family:Arial,Helvetica,sans-serif;color:#243047;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f1f3f8" style="background-color:#f1f3f8;">
+<tr><td align="center" style="padding:28px 12px;">
+  <table role="presentation" width="800" cellspacing="0" cellpadding="0" border="0" align="center" bgcolor="#ffffff" style="width:100%;max-width:800px;background-color:#ffffff;border:1px solid #e3e7ef;">
+
+    <!-- HEADER -->
+    <tr>
+      <td align="center" bgcolor="#66116f" style="padding:30px 28px 26px;background-color:#66116f;">
+        <div style="font-size:12px;font-weight:bold;letter-spacing:3px;text-transform:uppercase;color:#ead9ef;">Unipackauto India Pvt. Ltd.</div>
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:14px auto 10px;">
+          <tr><td align="center" bgcolor="#7d2f86" style="padding:7px 16px;border:1px solid #b58bbb;background-color:#7d2f86;font-size:13px;color:#ffffff;word-break:break-all;">${esc(quotationNumber)}</td></tr>
+        </table>
+        <div style="margin:0 0 6px;font-size:30px;line-height:36px;font-weight:bold;color:#ffffff;">Spare Part Quotation</div>
         <div style="font-size:13px;color:#f3e9f5;">Date: ${esc(date)}</div>
-      </header>
-      <main class="main-pad" style="padding:28px 30px;">
-        <table class="cust" role="presentation" cellspacing="0" cellpadding="0"
-          style="width:100%;margin:0 0 24px;border-bottom:1px solid #eee6f0;font-size:13px;">
+      </td>
+    </tr>
+
+    <!-- BODY -->
+    <tr>
+      <td class="main-pad" bgcolor="#ffffff" style="padding:28px 30px;background-color:#ffffff;">
+        <table class="cust" role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0 0 24px;border-bottom:1px solid #eee6f0;font-size:13px;">
           <tr>
-            <td class="lbl" style="width:18%;padding:8px 0;color:#8a8f9c;">Company Name</td>
-            <td colspan="3" style="padding:8px 0;font-size:16px;font-weight:700;color:#243047;">${esc(quote.company)}</td>
+            <td width="18%" style="width:18%;padding:8px 0;color:#8a8f9c;">Company Name</td>
+            <td colspan="3" style="padding:8px 0;font-size:16px;font-weight:bold;color:#243047;">${esc(quote.company)}</td>
           </tr>
           <tr>
-            <td class="lbl" style="padding:8px 0;color:#8a8f9c;">Email</td>
-            <td style="width:34%;padding:8px 8px 8px 0;"><a href="mailto:${esc(quote.email)}" style="color:#66116f;text-decoration:none;">${esc(quote.email)}</a></td>
-            <td class="lbl" style="width:16%;padding:8px 0;color:#8a8f9c;">Phone</td>
+            <td style="padding:8px 0;color:#8a8f9c;">Email</td>
+            <td width="34%" style="width:34%;padding:8px 8px 8px 0;"><a href="mailto:${esc(quote.email)}" style="color:#66116f;text-decoration:none;">${esc(quote.email)}</a></td>
+            <td width="16%" style="width:16%;padding:8px 0;color:#8a8f9c;">Phone</td>
             <td style="padding:8px 0;color:#243047;">${esc(quote.phone)}</td>
           </tr>
           <tr>
-            <td class="lbl" style="padding:8px 0;color:#8a8f9c;">Location</td>
+            <td style="padding:8px 0;color:#8a8f9c;">Location</td>
             <td style="padding:8px 8px 8px 0;color:#243047;">${esc(quote.city)}, ${esc(quote.state)}</td>
-            <td class="lbl" style="padding:8px 0;color:#8a8f9c;">Contact Person</td>
+            <td style="padding:8px 0;color:#8a8f9c;">Contact Person</td>
             <td style="padding:8px 0;color:#243047;">${esc(quote.contactName)}</td>
           </tr>
           <tr>
-            <td class="lbl" style="padding:8px 0 14px;color:#8a8f9c;">Request ID</td>
+            <td style="padding:8px 0 14px;color:#8a8f9c;">Request ID</td>
             <td colspan="3" style="padding:8px 0 14px;font-size:12px;color:#9aa0ad;word-break:break-all;">${esc(quote.id)}</td>
           </tr>
         </table>
         <p style="margin:0 0 10px;font-size:14px;color:#243047;">Dear Sir/Madam,</p>
-        <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#243047;">Thank you for your enquiry regarding spare parts.</p>
-        <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:#243047;">Please find below our offer for the required spare parts.</p>
+        <p style="margin:0 0 8px;font-size:14px;line-height:22px;color:#243047;">Thank you for your enquiry regarding spare parts.</p>
+        <p style="margin:0 0 22px;font-size:14px;line-height:22px;color:#243047;">Please find below our offer for the required spare parts.</p>
         <h2 style="margin:0 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:18px;">Spare Part Quotation</h2>
         ${buildItemisedTable(totals)}
         <h2 style="margin:28px 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:17px;">Commercial Terms &amp; Conditions</h2>
-        <ol style="margin:0;padding-left:22px;font-size:13px;line-height:1.55;color:#243047;">${termsHtml}</ol>
+        <ol style="margin:0;padding-left:22px;font-size:13px;line-height:20px;color:#243047;">${termsHtml}</ol>
         <h2 style="margin:28px 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:17px;">Bank Details for Payment</h2>
-        <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;padding:12px;border:1px solid #e5e7ef;border-radius:10px;background:#faf9fc;font-size:13px;">${bankHtml}</table>
-        <p style="margin:22px 0 8px;font-size:13px;line-height:1.55;color:#243047;">Kindly arrange the payment to enable us to process your order and dispatch the spare parts.</p>
-        <p style="margin:0 0 8px;font-size:13px;line-height:1.55;color:#243047;">For any further assistance or technical clarification, please feel free to contact our team.</p>
-        <p style="margin:0 0 22px;font-size:13px;line-height:1.55;color:#243047;">We look forward to your valuable order and assure you of our best services.</p>
-        ${quote.message ? `<p style="margin:18px 0;padding:14px;background:#faf7fb;border-left:3px solid #66116f;font-size:13px;color:#444;"><strong style="color:#41104f;">Customer message:</strong><br>${esc(quote.message)}</p>` : ""}
-        ${quote.attachment?.url ? `<p style="font-size:12px;color:#777;margin-top:12px;">Attachment: <a href="${esc(quote.attachment.url)}" style="color:#66116f;">${esc(quote.attachment.name || "View file")}</a></p>` : ""}
-        <p style="margin:0;font-size:13px;line-height:1.6;color:#243047;">Best regards,<br><strong style="color:#41104f;">Spare Parts Division</strong><br><strong style="color:#41104f;">Unipackauto India Pvt. Ltd.</strong></p>
-      </main>
-      <footer style="padding:22px 30px;text-align:center;background:#f7f5f9;border-top:1px solid #e9e4ed;font-size:12px;line-height:1.9;color:#50576a;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="8" border="0" bgcolor="#faf9fc" style="width:100%;border:1px solid #e5e7ef;background-color:#faf9fc;font-size:13px;">${bankHtml}</table>
+        <p style="margin:22px 0 8px;font-size:13px;line-height:20px;color:#243047;">Kindly arrange the payment to enable us to process your order and dispatch the spare parts.</p>
+        <p style="margin:0 0 8px;font-size:13px;line-height:20px;color:#243047;">For any further assistance or technical clarification, please feel free to contact our team.</p>
+        <p style="margin:0 0 22px;font-size:13px;line-height:20px;color:#243047;">We look forward to your valuable order and assure you of our best services.</p>
+        ${quote.message ? `<p style="margin:18px 0;padding:14px;background-color:#faf7fb;border-left:3px solid #66116f;font-size:13px;color:#444444;"><strong style="color:#41104f;">Customer message:</strong><br>${esc(quote.message)}</p>` : ""}
+        ${quote.attachment?.url ? `<p style="font-size:12px;color:#777777;margin-top:12px;">Attachment: <a href="${esc(quote.attachment.url)}" style="color:#66116f;">${esc(quote.attachment.name || "View file")}</a></p>` : ""}
+        <p style="margin:0;font-size:13px;line-height:21px;color:#243047;">Best regards,<br><strong style="color:#41104f;">Spare Parts Division</strong><br><strong style="color:#41104f;">Unipackauto India Pvt. Ltd.</strong></p>
+      </td>
+    </tr>
+
+    <!-- FOOTER -->
+    <tr>
+      <td align="center" bgcolor="#f7f5f9" style="padding:22px 30px;background-color:#f7f5f9;border-top:1px solid #e9e4ed;font-size:12px;line-height:23px;color:#50576a;">
         <strong style="font-size:14px;color:#41104f;">Unipackauto India Pvt. Ltd.</strong><br>
         <strong style="color:#50576a;">Phone:</strong> 9215521314, 7232001235, 9991226074<br>
         <a href="mailto:info@unipackauto.in" style="color:#63216f;text-decoration:none;">info@unipackauto.in</a> &nbsp;|&nbsp;
         <a href="mailto:services.upa@gmail.com" style="color:#63216f;text-decoration:none;">services.upa@gmail.com</a><br>
         <a href="mailto:uniquepackagingandautomation@gmail.com" style="color:#63216f;text-decoration:none;">uniquepackagingandautomation@gmail.com</a>
-      </footer>
-    </div>
-  </div>
+      </td>
+    </tr>
+
+  </table>
+</td></tr>
+</table>
 </body>
 </html>`;
 
