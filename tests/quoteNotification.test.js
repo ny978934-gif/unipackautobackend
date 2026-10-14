@@ -137,17 +137,21 @@ test("builds the branded spare-parts quotation email with request details and su
   const quotationNumber = createQuotationNumber(quote.id, issuedAt);
   const email = buildSparePartsQuotationEmail(quote, totals, quotationNumber, issuedAt);
 
-  assert.equal(quotationNumber, "UPK/Spare/Quote/Oct-26/507f1f77bcf86cd799439011");
+  assert.equal(quotationNumber, "UPK/Spare/Quote/Oct-26/d799439011");
   assert.equal(
     email.subject,
-    `Quotation for Spare Parts – Unipackauto India Pvt. Ltd. – ${quotationNumber}`
+    `Unipackauto Spare Parts Quote - ${quotationNumber}`
   );
   for (const value of [
+    "Spare Part Quotation",
+    "Company: Example Packaging",
+    "Email: customer@example.com",
+    "Location: Bhiwadi, Rajasthan",
+    "Request ID: 507f1f77bcf86cd799439011",
+    "Contact: A. Customer",
+    "Phone: +91 98765 43210",
     "Dear Sir/Madam,",
     "Please find below our offer for the required spare parts:",
-    "Company Name: Example Packaging",
-    "Contact Person: A. Customer",
-    "Location: Bhiwadi, Rajasthan",
     "12 October 2026",
     "GST: 18% Extra or as actual as per Govt. Norms .",
     "Freight Charges: Extra, as applicable.",
@@ -169,7 +173,8 @@ test("builds the branded spare-parts quotation email with request details and su
     "+91 98765 43210",
     "Bhiwadi, Rajasthan",
     "12 October 2026",
-    "UPK/Spare/Quote/Oct-26",
+    "UPK/Spare/Quote/Oct-26/d799439011",
+    "Customer Details",
     "Spare Part Description",
     "Machine/Application",
     "Subtotal",
@@ -189,6 +194,14 @@ test("builds the branded spare-parts quotation email with request details and su
   ]) {
     assert.ok(email.html.includes(value), `expected HTML email to contain: ${value}`);
   }
+  assert.ok(
+    email.html.indexOf("Customer Details") < email.html.indexOf("Dear Sir/Madam,"),
+    "customer details should appear before the greeting"
+  );
+  assert.ok(
+    email.html.indexOf("Dear Sir/Madam,") < email.html.indexOf("Commercial Terms &amp; Conditions"),
+    "the greeting and quotation should appear before the commercial terms"
+  );
   assert.match(email.html, /<strong>GST:<\/strong> 18% Extra or as actual as per Govt\. Norms \./);
   assert.match(email.html, /<strong>Freight Charges:<\/strong> Extra, as applicable\./);
   assert.match(email.html, /<strong>Payment Terms:<\/strong> 100% advance payment against the proforma invoice\./);
