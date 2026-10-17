@@ -11,6 +11,8 @@ import productRoutes from './routes/productRoutes.js';
 import subcategoryRoutes from './routes/subcategoryRoutes.js';
 import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
+import userRoutes from './routes/userRoutes.js';
+import cartRoutes from './routes/cartRoutes.js';
 import { requireAdmin } from './middleware/adminAuth.js';
 import Category from './models/Category.js';
 import Product from './models/Product.js';
@@ -93,6 +95,8 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/cart',  cartRoutes);
 
 // Admin stats
 app.get('/api/stats', requireAdmin, async (req, res) => {
