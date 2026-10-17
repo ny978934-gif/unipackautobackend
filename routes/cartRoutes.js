@@ -22,7 +22,8 @@ const getUserCart = async (userId) => {
 const enrichItem = async (productId) => {
   if (!mongoose.isValidObjectId(productId)) return null;
   const product = await Product.findById(productId)
-    .select("name image images partCode price inStock")
+    .select("name image images partCode price inStock category")
+    .populate("category", "name slug")
     .lean();
   return product || null;
 };
@@ -46,6 +47,8 @@ router.get("/", async (req, res) => {
           name:     product?.name     ?? item.name,
           image:    product?.image    ?? item.image ?? product?.images?.[0] ?? "",
           partCode: product?.partCode ?? item.partCode ?? "",
+          machine:  product?.category?.name ?? "",
+          categorySlug: product?.category?.slug ?? "",
           price:    serverPrice,
           quantity: item.quantity,
           lineTotal,
