@@ -410,6 +410,14 @@ export const describeEmailFailure = (error) => {
   const code = String(error?.code || "").toUpperCase();
   const rc   = Number(error?.responseCode || 0);
 
+  if (code === "RECIPIENT_DELIVERY_FAILED") {
+    return (error.deliveryFailures || [])
+      .map(({ recipient, error: failure }) =>
+        `Could not deliver email to ${recipient}: ${describeEmailFailure(failure)}`
+      )
+      .join(" ");
+  }
+
   if (code === "EAUTH" || rc === 535 || rc === 534)
     return "Gmail rejected the password. SMTP_PASS must be a 16-character App Password (not your Gmail login). " +
       "Generate one at myaccount.google.com → Security → 2-Step Verification → App passwords.";
@@ -424,6 +432,9 @@ export const describeEmailFailure = (error) => {
   if (error?.message?.startsWith("SMTP_PASS appears to still be a placeholder"))
     return error.message;
 
+  if (code === "RECIPIENT_NOT_ACCEPTED")
+    return error.message;
+
   if (error?.message?.includes("not configured") || error?.message?.includes("must both be set"))
     return `Email setup is incomplete: ${error.message}`;
 
@@ -436,6 +447,48 @@ const makeTransporter = () => {
   const config = getEmailConfiguration();
   return { config, transporter: nodemailer.createTransport(config.transport) };
 };
+
+export async function deliverEmailToRecipients(transporter, message, recipients) {
+  const uniqueRecipients = [...new Map(
+    recipients.map((recipient) => [recipient.trim().toLowerCase(), recipient.trim()])
+  ).values()];
+  const results = await Promise.allSettled(uniqueRecipients.map(async (recipient) => {
+    const info = await transporter.sendMail({ ...message, to: recipient });
+    const accepted = (info.accepted || []).map((address) =>
+      typeof address === "string" ? address : address.address
+    );
+    if (!accepted.some((address) => address?.toLowerCase() === recipient.toLowerCase())) {
+      throw Object.assign(
+        new Error(`SMTP did not accept the recipient ${recipient}.`),
+        { code: "RECIPIENT_NOT_ACCEPTED" }
+      );
+    }
+    return { recipient, info, accepted };
+  }));
+  const deliveryFailures = results.flatMap((result, index) =>
+    result.status === "rejected"
+      ? [{ recipient: uniqueRecipients[index], error: result.reason }]
+      : []
+  );
+  if (deliveryFailures.length) {
+    throw Object.assign(
+      new Error("The quotation email could not be delivered to every recipient."),
+      { code: "RECIPIENT_DELIVERY_FAILED", deliveryFailures }
+    );
+  }
+
+  const deliveries = results.map((result) => result.value);
+  return {
+    messageId: deliveries[0]?.info.messageId,
+    response: deliveries[0]?.info.response,
+    accepted: deliveries.flatMap((delivery) => delivery.accepted),
+    deliveries: deliveries.map(({ recipient, info }) => ({
+      recipient,
+      messageId: info.messageId,
+      response: info.response,
+    })),
+  };
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -454,6 +507,12 @@ export async function verifyQuoteEmail() {
  *   Each item: { name, itemCode, machine, quantity, unitPrice (rupees from MongoDB) }
  */
 export async function sendQuoteNotification(quote, pricedItems, quotationOptions = {}) {
+  const customerEmail = String(quote.email || "").trim();
+  if (!EMAIL_RE.test(customerEmail)) {
+    throw Object.assign(new Error("A valid customer email address is required for the quotation."), {
+      status: 400,
+    });
+  }
   const { config, transporter } = makeTransporter();
   const isSparePart = quote.quoteType === "sparePart";
   let totals = null;
@@ -537,28 +596,15 @@ export async function sendQuoteNotification(quote, pricedItems, quotationOptions
     };
   }
 
-  const info = await transporter.sendMail({
+  const delivery = await deliverEmailToRecipients(transporter, {
     from: `"UnipackAuto Enquiries" <${config.from}>`,
-    to: config.to,
     replyTo: quote.email,
     subject: email.subject,
     text: email.text,
     html: email.html,
-  });
-
-  const accepted = (info.accepted || []).map((r) =>
-    typeof r === "string" ? r : r.address
-  );
-  if (!accepted.some((r) => r?.toLowerCase() === config.to.toLowerCase())) {
-    throw Object.assign(
-      new Error("SMTP did not accept the admin notification recipient."),
-      { code: "RECIPIENT_NOT_ACCEPTED" }
-    );
-  }
+  }, [config.to, customerEmail]);
   return {
-    messageId: info.messageId,
-    response: info.response,
-    accepted,
+    ...delivery,
     ...(totals ? { totals, quotationNumber: email.quotationNumber } : {}),
   };
 }

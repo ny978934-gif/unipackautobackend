@@ -4,9 +4,11 @@ import {
   buildSparePartsQuotationEmail,
   calculateQuotationTotals,
   createQuotationNumber,
+  deliverEmailToRecipients,
   describeEmailFailure,
   formatINR,
   getEmailConfiguration,
+  sendQuoteNotification,
 } from "../services/quoteNotification.js";
 
 test("configures Gmail notifications and removes spaces from grouped app passwords", () => {
@@ -51,6 +53,85 @@ test("gives actionable guidance for common Gmail authentication and VPS network 
   assert.match(
     describeEmailFailure(Object.assign(new Error("Connection timed out"), { code: "ETIMEDOUT" })),
     /outbound SMTP/
+  );
+});
+
+test("sends identical quotation content separately to the owner and customer", async () => {
+  const sentMessages = [];
+  const transporter = {
+    async sendMail(message) {
+      sentMessages.push(message);
+      return { accepted: [message.to], messageId: `message-${sentMessages.length}` };
+    },
+  };
+  const message = {
+    from: "quotes@unipackauto.in",
+    subject: "Unipackauto Spare Parts Quote",
+    text: "Quotation details and totals",
+    html: "<p>Quotation details and totals</p>",
+  };
+
+  const result = await deliverEmailToRecipients(transporter, message, [
+    "sales@unipackauto.in",
+    "customer@example.com",
+  ]);
+
+  assert.deepEqual(sentMessages, [
+    { ...message, to: "sales@unipackauto.in" },
+    { ...message, to: "customer@example.com" },
+  ]);
+  assert.deepEqual(result.accepted, ["sales@unipackauto.in", "customer@example.com"]);
+  assert.equal(result.deliveries.length, 2);
+});
+
+test("deduplicates a customer who is also the configured quotation owner", async () => {
+  const sentMessages = [];
+  const transporter = {
+    async sendMail(message) {
+      sentMessages.push(message);
+      return { accepted: [message.to] };
+    },
+  };
+
+  await deliverEmailToRecipients(transporter, { subject: "Quote" }, [
+    "sales@unipackauto.in",
+    "SALES@UNIPACKAUTO.IN",
+  ]);
+
+  assert.equal(sentMessages.length, 1);
+});
+
+test("attempts delivery to both recipients and reports partial delivery failures", async () => {
+  const attemptedRecipients = [];
+  const transporter = {
+    async sendMail(message) {
+      attemptedRecipients.push(message.to);
+      if (message.to === "customer@example.com") {
+        throw Object.assign(new Error("Customer mailbox unavailable"), { code: "ECONNECTION" });
+      }
+      return { accepted: [message.to] };
+    },
+  };
+
+  await assert.rejects(
+    deliverEmailToRecipients(transporter, { subject: "Quote" }, [
+      "sales@unipackauto.in",
+      "customer@example.com",
+    ]),
+    (error) => {
+      assert.equal(error.code, "RECIPIENT_DELIVERY_FAILED");
+      assert.match(describeEmailFailure(error), /customer@example\.com/);
+      assert.match(describeEmailFailure(error), /SMTP server/);
+      return true;
+    }
+  );
+  assert.deepEqual(attemptedRecipients, ["sales@unipackauto.in", "customer@example.com"]);
+});
+
+test("rejects an invalid customer email before attempting SMTP delivery", async () => {
+  await assert.rejects(
+    sendQuoteNotification({ email: "not-an-email" }),
+    { status: 400, message: "A valid customer email address is required for the quotation." }
   );
 });
 
