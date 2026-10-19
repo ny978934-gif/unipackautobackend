@@ -13,6 +13,7 @@ import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
+import { createCorsOptions } from './config/cors.js';
 import { requireAdmin } from './middleware/adminAuth.js';
 import Category from './models/Category.js';
 import Product from './models/Product.js';
@@ -30,32 +31,7 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-const normalizeOrigin = (value) => value.trim().replace(/\/+$/, '');
-
-const envOrigins = (process.env.CLIENT_ORIGIN || '')
-  .split(',')
-  .map(normalizeOrigin)
-  .filter(Boolean);
-
-const allowedOriginPatterns = [
-  /^https?:\/\/localhost(:\d+)?$/,
-  /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
-  /^https:\/\/unipackauto(?:-[a-z0-9-]+)?\.vercel\.app$/i,
-];
-
-const corsOptions = {
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    const normalizedOrigin = normalizeOrigin(origin);
-    const isAllowed =
-      envOrigins.includes(normalizedOrigin) ||
-      allowedOriginPatterns.some((pattern) => pattern.test(normalizedOrigin));
-    callback(null, isAllowed);
-  },
-  credentials: true,
-};
-
-app.use(cors(corsOptions));
+app.use(cors(createCorsOptions()));
 
 const normalizeLegacyImageUrls = (value, fieldName = '') => {
   if (typeof value === 'string' && ['image', 'images'].includes(fieldName)) {
