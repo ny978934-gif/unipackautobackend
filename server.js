@@ -8,7 +8,7 @@ import categoryRoutes from './routes/categoryRoutes.js';
 import contactRoutes from './routes/contact.js';
 import quoteRoutes from './routes/quoteRoutes.js';
 import productRoutes from './routes/productRoutes.js';
-import subcategoryRoutes from './routes/subCategoryRoutes.js';
+import subcategoryRoutes from './routes/subcategoryRoutes.js';
 import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
