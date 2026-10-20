@@ -5,8 +5,8 @@ import { parseExcel, parseWordText } from "../routes/sparePartImportRoutes.js";
 
 test("finds a spare-part table regardless of worksheet name", () => {
   const worksheet = XLSX.utils.aoa_to_sheet([
-    ["Part Name", "Part Code", "Price", "Stock Qty", "U.O.M."],
-    ["Heating Element", "HE-22", 1250, 8, "piece"],
+    ["Part Name", "Spare Image", "Price", "Stock Qty", "U.O.M."],
+    ["Heating Element", "https://example.com/heater.jpg", 1250, 8, "piece"],
   ]);
   const otherWorksheet = XLSX.utils.aoa_to_sheet([
     ["Part Name", "Price", "Stock", "UOM"],
@@ -19,9 +19,8 @@ test("finds a spare-part table regardless of worksheet name", () => {
 
   assert.deepEqual(parseExcel(buffer), [{
     name: "Heating Element",
-    partCode: "HE-22",
+    image: "https://example.com/heater.jpg",
     price: "1250",
-    stock: "8",
     uom: "piece",
   }]);
 });
@@ -103,12 +102,11 @@ test("rejects Excel files without a valid part-name table and data row", () => {
 
 test("parses Word tables with field headings", () => {
   assert.deepEqual(
-    parseWordText("Part Name\tPart Code\tPrice\tStock\tUOM\nRoller\tRL-7\t₹1,200\t5\tset"),
+    parseWordText("Part Name\tSpare Image\tPrice\tStock\tUOM\nRoller\thttps://example.com/roller.jpg\t₹1,200\t5\tset"),
     [{
       name: "Roller",
-      partCode: "RL-7",
+      image: "https://example.com/roller.jpg",
       price: "₹1,200",
-      stock: "5",
       uom: "set",
     }],
   );
@@ -116,10 +114,10 @@ test("parses Word tables with field headings", () => {
 
 test("parses Word paragraphs with labeled fields and multiple parts", () => {
   assert.deepEqual(
-    parseWordText("Part Name: Belt\nPart Code: BT-1\nPrice: 300\nUOM: piece\n\nPart Name: Gear\nPart Code: GR-2"),
+    parseWordText("Part Name: Belt\nSpare Image: https://example.com/belt.jpg\nPrice: 300\nUOM: piece\n\nPart Name: Gear\nPrice: 20"),
     [
-      { name: "Belt", partCode: "BT-1", price: "300", uom: "piece" },
-      { name: "Gear", partCode: "GR-2" },
+      { name: "Belt", image: "https://example.com/belt.jpg", price: "300", uom: "piece" },
+      { name: "Gear", price: "20" },
     ],
   );
 });

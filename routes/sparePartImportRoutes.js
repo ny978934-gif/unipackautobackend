@@ -34,9 +34,8 @@ const upload = multer({
 
 const headerAliases = {
   name: ["name", "partname", "sparepartname", "productname", "itemname"],
-  partCode: ["partcode", "itemcode", "code", "sku", "partno", "partnumber", "itemnumber"],
+  image: ["image", "spareimage", "imageurl", "photo", "photourl"],
   price: ["price", "mrp", "rate", "unitprice", "sellingprice"],
-  stock: ["stock", "stockqty", "stockquantity", "quantity", "qty", "availablequantity", "inventory"],
   uom: ["uom", "unit", "unitofmeasure", "unitmeasure", "measure"],
 };
 const normalizeHeader = (value) => String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -142,20 +141,6 @@ const parseWord = async (buffer, extension) => {
   return parseWordText(document.getBody());
 };
 
-const parseStock = (value, rowNumber) => {
-  if (value === undefined || value === "") return { stock: 0, inStock: true };
-  const normalized = String(value).trim().toLowerCase();
-  if (["in stock", "available", "yes", "true"].includes(normalized)) return { stock: 1, inStock: true };
-  if (["out of stock", "unavailable", "no", "false"].includes(normalized)) return { stock: 0, inStock: false };
-  const stock = Number(normalized.replace(/,/g, ""));
-  if (!Number.isFinite(stock) || stock < 0 || !Number.isInteger(stock)) {
-    const error = new Error(`Row ${rowNumber}: stock must be a non-negative whole number or availability value.`);
-    error.status = 422;
-    throw error;
-  }
-  return { stock, inStock: stock > 0 };
-};
-
 const slugify = (value) =>
   value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "spare-part";
 
@@ -211,8 +196,7 @@ router.post("/upload-parse", requireAdmin, upload.single("file"), async (req, re
         error.status = 422;
         throw error;
       }
-      const { stock, inStock } = parseStock(record.stock, rowNumber);
-      const baseSlug = slugify(record.partCode ? `${name}-${record.partCode}` : name);
+      const baseSlug = slugify(name);
       let slug = baseSlug;
       let suffix = 1;
       while (existingSlugs.has(slug)) {
@@ -225,10 +209,9 @@ router.post("/upload-parse", requireAdmin, upload.single("file"), async (req, re
         category: category._id,
         name,
         slug,
-        partCode: record.partCode?.trim() || "",
+        image: record.image?.trim() || "",
+        images: record.image?.trim() ? [record.image.trim()] : [],
         price,
-        stock,
-        inStock,
         uom: record.uom?.trim() || "",
       };
     });

@@ -1,6 +1,7 @@
 import Category from "../models/Category.js";
 import Product from "../models/Product.js";
 import Subcategory from "../models/Subcategory.js";
+import { createSparePartsWorkbook } from "../services/sparePartsWorkbook.js";
 
 const slugify = (value) =>
   value
@@ -59,10 +60,10 @@ export const createProduct = async (req, res) => {
     if (!category) {
       return res.status(400).json({ message: "Select a valid category for this product." });
     }
-    const subcategory = subcategoryId
+    const subcategory = type === "machine" && subcategoryId
       ? await Subcategory.findOne({ _id: subcategoryId, category: category._id })
       : null;
-    if (subcategoryId && !subcategory) {
+    if (type === "machine" && subcategoryId && !subcategory) {
       return res.status(400).json({ message: "Select a subcategory from the chosen category." });
     }
 
@@ -70,8 +71,8 @@ export const createProduct = async (req, res) => {
     if (!Number.isFinite(priceValue) || priceValue < 0) {
       return res.status(400).json({ message: "Price must be a non-negative number." });
     }
-    const stockValue = Number(stock);
-    if (!Number.isFinite(stockValue) || stockValue < 0) {
+    const stockValue = type === "machine" ? Number(stock) : 0;
+    if (type === "machine" && (!Number.isFinite(stockValue) || stockValue < 0)) {
       return res.status(400).json({ message: "Stock must be a non-negative number." });
     }
 
@@ -89,18 +90,20 @@ export const createProduct = async (req, res) => {
       subcategory: subcategory?._id || null,
       name: name.trim(),
       slug: slugify(slug || name) || `product-${Date.now()}`,
-      partCode: String(partCode).trim(),
+      partCode: type === "machine" ? String(partCode).trim() : "",
       price: priceValue,
       stock: stockValue,
       uom: String(uom).trim(),
       image: productImages[0] || "",
       images: productImages,
-      description,
-      specifications: parseSpecifications(specifications),
-      compatibleMachines: Array.isArray(compatibleMachines)
+      description: type === "machine" ? description : "",
+      specifications: type === "machine" ? parseSpecifications(specifications) : [],
+      compatibleMachines: type === "machine" && Array.isArray(compatibleMachines)
         ? compatibleMachines
-        : String(compatibleMachines).split(",").map((item) => item.trim()).filter(Boolean),
-      inStock: inStock !== false && inStock !== "false",
+        : type === "machine"
+          ? String(compatibleMachines).split(",").map((item) => item.trim()).filter(Boolean)
+          : [],
+      inStock: type === "machine" ? inStock !== false && inStock !== "false" : true,
     });
 
     return res.status(201).json(await populateCategory(Product.findById(product._id)));
@@ -184,7 +187,7 @@ export const updateProduct = async (req, res) => {
       if (!category) return res.status(400).json({ message: "Select a valid category for this product." });
       product.category = category._id;
     }
-    if (subcategoryId !== undefined) {
+    if (product.type === "machine" && subcategoryId !== undefined) {
       if (!subcategoryId) {
         product.subcategory = null;
       } else {
@@ -197,7 +200,7 @@ export const updateProduct = async (req, res) => {
         }
         product.subcategory = subcategory._id;
       }
-    } else if (categoryId) {
+    } else if (product.type === "machine" && categoryId) {
       product.subcategory = null;
     }
     if (name !== undefined) {
@@ -207,7 +210,6 @@ export const updateProduct = async (req, res) => {
     if (slug !== undefined || name !== undefined) {
       product.slug = slugify(slug || name || product.name) || `product-${product._id}`;
     }
-    if (partCode !== undefined) product.partCode = partCode;
     if (price !== undefined) {
       const priceValue = Number(price);
       if (!Number.isFinite(priceValue) || priceValue < 0) {
@@ -215,7 +217,7 @@ export const updateProduct = async (req, res) => {
       }
       product.price = priceValue;
     }
-    if (stock !== undefined) {
+    if (product.type === "machine" && stock !== undefined) {
       const stockValue = Number(stock);
       if (!Number.isFinite(stockValue) || stockValue < 0) {
         return res.status(400).json({ message: "Stock must be a non-negative number." });
@@ -233,14 +235,25 @@ export const updateProduct = async (req, res) => {
       product.image = image;
       product.images = image ? [image] : [];
     }
-    if (description !== undefined) product.description = description;
-    if (specifications !== undefined) product.specifications = parseSpecifications(specifications);
-    if (compatibleMachines !== undefined) {
-      product.compatibleMachines = Array.isArray(compatibleMachines)
-        ? compatibleMachines
-        : String(compatibleMachines).split(",").map((item) => item.trim()).filter(Boolean);
+    if (product.type === "machine") {
+      if (partCode !== undefined) product.partCode = partCode;
+      if (description !== undefined) product.description = description;
+      if (specifications !== undefined) product.specifications = parseSpecifications(specifications);
+      if (compatibleMachines !== undefined) {
+        product.compatibleMachines = Array.isArray(compatibleMachines)
+          ? compatibleMachines
+          : String(compatibleMachines).split(",").map((item) => item.trim()).filter(Boolean);
+      }
+      if (inStock !== undefined) product.inStock = inStock !== false && inStock !== "false";
+    } else {
+      product.subcategory = null;
+      product.partCode = "";
+      product.stock = 0;
+      product.description = "";
+      product.specifications = [];
+      product.compatibleMachines = [];
+      product.inStock = true;
     }
-    if (inStock !== undefined) product.inStock = inStock !== false && inStock !== "false";
 
     await product.save();
     return res.status(200).json(await populateCategory(Product.findById(product._id)));
@@ -248,6 +261,35 @@ export const updateProduct = async (req, res) => {
     return res.status(error.code === 11000 ? 409 : 500).json({
       message: error.code === 11000 ? "Product slug already exists." : "Failed to update product.",
     });
+  }
+};
+
+export const exportSpareParts = async (req, res) => {
+  try {
+    const filter = { type: "sparepart" };
+    let filename = "spare-parts-all.xlsx";
+    if (req.query.category) {
+      if (!/^[0-9a-fA-F]{24}$/.test(req.query.category)) {
+        return res.status(400).json({ message: "A valid spare-part category is required." });
+      }
+      const category = await Category.findOne({ _id: req.query.category, type: "sparepart" });
+      if (!category) {
+        return res.status(404).json({ message: "Spare-part category not found." });
+      }
+      filter.category = category._id;
+      const safeCategoryName = category.slug.replace(/[^a-z0-9-]/gi, "-");
+      filename = `spare-parts-${safeCategoryName}.xlsx`;
+    }
+
+    const products = await Product.find(filter).populate("category").sort({ createdAt: -1 }).lean();
+    const workbook = createSparePartsWorkbook(products);
+    const file = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(file);
+  } catch (error) {
+    console.error("Failed to export spare parts:", error);
+    return res.status(500).json({ message: "Failed to export spare parts." });
   }
 };
 

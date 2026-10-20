@@ -90,6 +90,26 @@ const productSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    toJSON: {
+      transform: (_document, product) => {
+        if (product.type === "sparepart") {
+          if (!product.image && product.images?.length) {
+            product.image = product.images[0];
+          }
+          delete product.images;
+          [
+            "subcategory",
+            "partCode",
+            "stock",
+            "description",
+            "specifications",
+            "compatibleMachines",
+            "inStock",
+          ].forEach((field) => delete product[field]);
+        }
+        return product;
+      },
+    },
   }
 );
 
