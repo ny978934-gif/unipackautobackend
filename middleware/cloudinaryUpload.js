@@ -126,10 +126,33 @@ const uploadProductImageFiles = upload.fields([
   { name: "image", maxCount: 1 },
 ]);
 
+const parseImageUrls = (value) => {
+  if (Array.isArray(value)) return value.filter((url) => typeof url === "string" && url.trim());
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.filter((url) => typeof url === "string" && url.trim());
+  } catch {
+    return [value];
+  }
+  return [];
+};
+
 export const uploadMultipleImages = (req, res, next) => {
   uploadProductImageFiles(req, res, async (error) => {
     if (error) return next(error);
     const files = [...(req.files?.images || []), ...(req.files?.image || [])];
+    const imageLimit = req.body.type === "machine" ? 10 : 5;
+    const imageUrlCount = req.body.type === "machine"
+      ? 0
+      : parseImageUrls(req.body.imageUrls).length ||
+        parseImageUrls(req.body.images).length ||
+        (typeof req.body.image === "string" && req.body.image.trim() ? 1 : 0);
+    if (files.length + imageUrlCount > imageLimit) {
+      const limitError = new Error(`A ${req.body.type === "machine" ? "machine" : "spare part"} may have at most ${imageLimit} images.`);
+      limitError.status = 400;
+      return next(limitError);
+    }
     if (!files.length) return next();
 
     try {

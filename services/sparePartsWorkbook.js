@@ -6,7 +6,9 @@ export const createSparePartsWorkbook = (products) => {
   const rows = products.map((product) => [
     product.category?.name || "",
     product.name,
-    product.image || product.images?.[0] || "",
+    product.images?.length
+      ? product.images.join(" | ")
+      : product.image || "",
     product.price,
     product.uom || "",
   ]);

@@ -11,20 +11,23 @@ test("exports only the five spare-part fields", () => {
     {
       category: { name: "Strapping Machine" },
       name: "Feed Roller",
-      image: "",
-      images: ["https://example.com/feed-roller.jpg"],
+      images: ["https://example.com/feed-roller-front.jpg", "https://example.com/feed-roller-side.jpg"],
       price: 250,
       uom: "piece",
       stock: 4,
       partCode: "FR-1",
     },
   ]);
+  const exportedWorkbook = XLSX.read(
+    XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }),
+    { type: "buffer" },
+  );
 
   assert.deepEqual(
-    XLSX.utils.sheet_to_json(workbook.Sheets["Spare Parts"], { header: 1 }),
+    XLSX.utils.sheet_to_json(exportedWorkbook.Sheets["Spare Parts"], { header: 1 }),
     [
       ["Machine Name", "Spare Part Name", "Spare Image", "Price", "UOM"],
-      ["Strapping Machine", "Feed Roller", "https://example.com/feed-roller.jpg", 250, "piece"],
+      ["Strapping Machine", "Feed Roller", "https://example.com/feed-roller-front.jpg | https://example.com/feed-roller-side.jpg", 250, "piece"],
     ],
   );
 });
@@ -54,13 +57,34 @@ test("spare-part API serialization omits fields outside the spare-part contract"
   }).toJSON();
 
   assert.deepEqual(
-    ["category", "name", "image", "price", "uom", "slug", "type"].filter((key) => key in product).length,
-    7,
+    ["category", "name", "image", "images", "price", "uom", "slug", "type"].filter((key) => key in product).length,
+    8,
   );
   assert.equal(product.image, "https://example.com/feed-roller.jpg");
-  for (const field of ["images", "subcategory", "partCode", "stock", "description", "specifications", "compatibleMachines", "inStock"]) {
+  assert.deepEqual(product.images, ["https://example.com/feed-roller.jpg"]);
+  for (const field of ["subcategory", "partCode", "stock", "description", "specifications", "compatibleMachines", "inStock"]) {
     assert.equal(field in product, false, `${field} should not be serialized for spare parts`);
   }
+});
+
+test("rejects spare parts with more than five image URLs while allowing machine galleries", () => {
+  const sparePart = new Product({
+    type: "sparepart",
+    category: new mongoose.Types.ObjectId(),
+    name: "Feed Roller",
+    slug: "feed-roller-images",
+    images: Array.from({ length: 6 }, (_, index) => `https://example.com/image-${index}.jpg`),
+  });
+  const machine = new Product({
+    type: "machine",
+    category: new mongoose.Types.ObjectId(),
+    name: "Wrapper",
+    slug: "wrapper-images",
+    images: Array.from({ length: 10 }, (_, index) => `https://example.com/image-${index}.jpg`),
+  });
+
+  assert.equal(sparePart.validateSync().errors.images.message, "Spare parts can have at most 5 images.");
+  assert.equal(machine.validateSync(), undefined);
 });
 
 test("rejects an invalid category filter on spare-part exports", async () => {

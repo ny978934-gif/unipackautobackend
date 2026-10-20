@@ -1,6 +1,8 @@
 import Category from "../models/Category.js";
 import Product from "../models/Product.js";
 import Subcategory from "../models/Subcategory.js";
+import XLSX from "xlsx";
+import { deleteCloudinaryImages } from "../services/cloudinaryAssets.js";
 import { createSparePartsWorkbook } from "../services/sparePartsWorkbook.js";
 
 const slugify = (value) =>
@@ -41,6 +43,7 @@ export const createProduct = async (req, res) => {
       uom = "",
       image = "",
       images = [],
+      imageUrls = [],
       description = "",
       specifications = [],
       compatibleMachines = [],
@@ -76,14 +79,25 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ message: "Stock must be a non-negative number." });
     }
 
-    const providedImages = parseArray(images).filter((url) => typeof url === "string" && url.trim());
-    const productImages = req.uploadedImageUrls?.length
-      ? req.uploadedImageUrls
-      : providedImages.length
-        ? providedImages
-        : image
-          ? [image]
-          : [];
+    const providedImages = parseArray(type === "sparepart" ? imageUrls ?? images : images)
+      .filter((url) => typeof url === "string" && url.trim());
+    if (type === "sparepart" && !providedImages.length && image && typeof image === "string") {
+      providedImages.push(image);
+    }
+    const productImages = type === "sparepart"
+      ? [...(req.uploadedImageUrls || []), ...providedImages]
+      : req.uploadedImageUrls?.length
+        ? req.uploadedImageUrls
+        : providedImages.length
+          ? providedImages
+          : image
+            ? [image]
+            : [];
+    const uniqueProductImages = [...new Set(productImages)];
+    const imageLimit = type === "sparepart" ? 5 : 10;
+    if (uniqueProductImages.length > imageLimit) {
+      return res.status(400).json({ message: `A ${type === "machine" ? "machine" : "spare part"} may have at most ${imageLimit} images.` });
+    }
     const product = await Product.create({
       type,
       category: category._id,
@@ -94,8 +108,8 @@ export const createProduct = async (req, res) => {
       price: priceValue,
       stock: stockValue,
       uom: String(uom).trim(),
-      image: productImages[0] || "",
-      images: productImages,
+      image: uniqueProductImages[0] || "",
+      images: uniqueProductImages,
       description: type === "machine" ? description : "",
       specifications: type === "machine" ? parseSpecifications(specifications) : [],
       compatibleMachines: type === "machine" && Array.isArray(compatibleMachines)
@@ -173,6 +187,7 @@ export const updateProduct = async (req, res) => {
       uom,
       image,
       images,
+      imageUrls,
       description,
       specifications,
       compatibleMachines,
@@ -225,7 +240,23 @@ export const updateProduct = async (req, res) => {
       product.stock = stockValue;
     }
     if (uom !== undefined) product.uom = String(uom).trim();
-    if (req.uploadedImageUrls?.length) {
+    const providedImages = parseArray(product.type === "sparepart" ? imageUrls ?? images : images)
+      .filter((url) => typeof url === "string" && url.trim());
+    if (product.type === "sparepart" && !providedImages.length && image && typeof image === "string") {
+      providedImages.push(image);
+    }
+    if (req.uploadedImageUrls?.length || (product.type === "sparepart" && imageUrls !== undefined)) {
+      const nextImages = product.type === "sparepart"
+        ? [...(req.uploadedImageUrls || []), ...providedImages]
+        : req.uploadedImageUrls;
+      const uniqueImages = [...new Set(nextImages)];
+      const imageLimit = product.type === "sparepart" ? 5 : 10;
+      if (uniqueImages.length > imageLimit) {
+        return res.status(400).json({ message: `A ${product.type === "machine" ? "machine" : "spare part"} may have at most ${imageLimit} images.` });
+      }
+      product.images = uniqueImages;
+      product.image = uniqueImages[0] || "";
+    } else if (req.uploadedImageUrls?.length) {
       product.images = req.uploadedImageUrls;
       product.image = req.uploadedImageUrls[0];
     } else if (images !== undefined) {
@@ -297,7 +328,16 @@ export const deleteProduct = async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
     if (!product) return res.status(404).json({ message: "Product not found." });
-    return res.status(200).json({ message: "Product deleted successfully." });
+    try {
+      await deleteCloudinaryImages([product.image, ...(product.images || [])]);
+      return res.status(200).json({ message: "Product and associated Cloudinary images deleted successfully." });
+    } catch (error) {
+      console.error("Product deleted but associated Cloudinary image cleanup failed:", error);
+      return res.status(200).json({
+        message: "Product deleted, but one or more Cloudinary images could not be deleted.",
+        imageCleanupFailed: true,
+      });
+    }
   } catch (error) {
     return res.status(500).json({ message: "Failed to delete product.", error: error.message });
   }
@@ -315,9 +355,25 @@ export const deleteProductsByCategory = async (req, res) => {
       return res.status(404).json({ message: "Spare-part category not found." });
     }
 
+    const categoryProducts = await Product.find({ category: category._id, type: "sparepart" })
+      .select("image images")
+      .lean();
     const result = await Product.deleteMany({ category: category._id, type: "sparepart" });
+    let imageCleanupFailed = false;
+    try {
+      await deleteCloudinaryImages(categoryProducts.flatMap((product) => [
+        product.image,
+        ...(product.images || []),
+      ]));
+    } catch (error) {
+      imageCleanupFailed = true;
+      console.error("Spare parts deleted but associated Cloudinary image cleanup failed:", error);
+    }
     return res.status(200).json({
-      message: "Spare parts in the selected category deleted successfully.",
+      message: imageCleanupFailed
+        ? "Spare parts deleted, but one or more Cloudinary images could not be deleted."
+        : "Spare parts in the selected category deleted successfully.",
+      imageCleanupFailed,
       deletedCount: result.deletedCount,
       category: { id: category._id, name: category.name },
     });

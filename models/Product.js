@@ -59,11 +59,15 @@ const productSchema = new mongoose.Schema(
       default: "",
     },
 
-    images: [
-      {
-        type: String,
+    images: {
+      type: [{ type: String }],
+      validate: {
+        validator(images) {
+          return this.type !== "sparepart" || images.length <= 5;
+        },
+        message: "Spare parts can have at most 5 images.",
       },
-    ],
+    },
 
     description: {
       type: String,
@@ -96,7 +100,6 @@ const productSchema = new mongoose.Schema(
           if (!product.image && product.images?.length) {
             product.image = product.images[0];
           }
-          delete product.images;
           [
             "subcategory",
             "partCode",
