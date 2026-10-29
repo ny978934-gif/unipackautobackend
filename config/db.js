@@ -13,14 +13,14 @@ const connectDB = async () => {
 
   try {
     await mongoose.connect(mongoUri, {
-      authSource: 'admin',
       serverSelectionTimeoutMS: 10000,
     });
     console.log('MongoDB Connected Successfully');
   } catch (error) {
-    if (error.message.includes('bad auth') || error.message.includes('authentication failed')) {
+    const errorMessage = error.message.toLowerCase();
+    if (error.code === 18 || errorMessage.includes('bad auth') || errorMessage.includes('authentication failed')) {
       console.error(
-        'MongoDB authentication failed. Check the Atlas database username, password, cluster host, and URL-encode special password characters.'
+        'MongoDB authentication failed. Check the database username, password, authentication database (authSource), and cluster host. URL-encode special characters in the username or password.'
       );
     } else {
       console.error('Database connection failed:', error.message);

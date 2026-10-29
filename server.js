@@ -27,6 +27,24 @@ const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 5000);
 
+const startServer = (databaseConnected) => {
+  const server = app.listen(PORT, () => {
+    const status = databaseConnected ? '' : ' (DB offline)';
+    console.log(`Server running${status} on http://localhost:${PORT}`);
+  });
+
+  server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(
+        `Port ${PORT} is already in use. Stop the process using it or set a different PORT in server/.env.`
+      );
+    } else {
+      console.error('Server failed to start:', error.message);
+    }
+    process.exitCode = 1;
+  });
+};
+
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
@@ -134,13 +152,9 @@ connectDB()
     } catch (err) {
       console.warn('Auto-seed check notice:', err.message);
     }
-    app.listen(PORT, () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-    });
+    startServer(true);
   })
   .catch((err) => {
     console.error('MongoDB connection error:', err.message);
-    app.listen(PORT, () => {
-      console.log(`Server running (DB offline) on http://localhost:${PORT}`);
-    });
+    startServer(false);
   });
