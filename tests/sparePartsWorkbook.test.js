@@ -67,7 +67,14 @@ test("spare-part API serialization omits fields outside the spare-part contract"
   }
 });
 
-test("rejects spare parts with more than five image URLs while allowing machine galleries", () => {
+test("supports five spare-part images, rejects more than five, and preserves machine galleries", () => {
+  const fiveImageSparePart = new Product({
+    type: "sparepart",
+    category: new mongoose.Types.ObjectId(),
+    name: "Roller with five images",
+    slug: "roller-with-five-images",
+    images: Array.from({ length: 5 }, (_, index) => `https://example.com/image-${index}.jpg`),
+  });
   const sparePart = new Product({
     type: "sparepart",
     category: new mongoose.Types.ObjectId(),
@@ -83,6 +90,7 @@ test("rejects spare parts with more than five image URLs while allowing machine 
     images: Array.from({ length: 10 }, (_, index) => `https://example.com/image-${index}.jpg`),
   });
 
+  assert.equal(fiveImageSparePart.validateSync(), undefined);
   assert.equal(sparePart.validateSync().errors.images.message, "Spare parts can have at most 5 images.");
   assert.equal(machine.validateSync(), undefined);
 });

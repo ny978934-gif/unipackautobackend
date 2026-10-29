@@ -27,6 +27,17 @@ const attachmentSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const quotationItemSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    itemCode: { type: String, default: "" },
+    machine: { type: String, default: "" },
+    quantity: { type: Number, required: true },
+    unitPricePaise: { type: Number, required: true, min: 0 },
+  },
+  { _id: false }
+);
+
 const quoteRequestSchema = new mongoose.Schema(
   {
     quoteType: { type: String, enum: ["sparePart", "machine"], required: true },
@@ -57,10 +68,16 @@ const quoteRequestSchema = new mongoose.Schema(
     quotation: {
       number: { type: String, trim: true, maxlength: 120, default: "" },
       sentAt: { type: Date, default: null },
+      items: { type: [quotationItemSchema], default: [] },
       subtotalCents: { type: Number, min: 0, default: null },
       gstCents: { type: Number, min: 0, default: null },
       grossTotalCents: { type: Number, min: 0, default: null },
+      discountType: { type: String, enum: ["none", "percentage", "fixed"], default: "none" },
+      discountValue: { type: Number, min: 0, default: 0 },
+      discountCents: { type: Number, min: 0, default: 0 },
+      finalTotalCents: { type: Number, min: 0, default: null },
     },
+    customerAccessTokenHash: { type: String, select: false },
   },
   { timestamps: true }
 );

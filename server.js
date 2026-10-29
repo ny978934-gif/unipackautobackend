@@ -8,7 +8,6 @@ import categoryRoutes from './routes/categoryRoutes.js';
 import contactRoutes from './routes/contact.js';
 import quoteRoutes from './routes/quoteRoutes.js';
 import productRoutes from './routes/productRoutes.js';
-import subcategoryRoutes from './routes/subcategoryRoutes.js';
 import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
@@ -112,13 +111,11 @@ app.get('/api/stats', requireAdmin, async (req, res) => {
 app.use('/api/inquiries', contactRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/spare/categories', categoryRoutes);
-app.use('/api/subcategories', subcategoryRoutes);
 app.use('/api/spare-parts', sparePartImportRoutes);
 app.use('/api/products', productRoutes);
 
 // Compatibility aliases
 app.use('/api/spare/parts', productRoutes);
-app.use('/api/spare/subcategories', subcategoryRoutes);
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../client/dist')));

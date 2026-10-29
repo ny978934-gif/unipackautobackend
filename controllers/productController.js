@@ -1,6 +1,6 @@
 import Category from "../models/Category.js";
 import Product from "../models/Product.js";
-import Subcategory from "../models/Subcategory.js";
+import "../models/Subcategory.js";
 import XLSX from "xlsx";
 import { deleteCloudinaryImages } from "../services/cloudinaryAssets.js";
 import { createSparePartsWorkbook } from "../services/sparePartsWorkbook.js";
@@ -32,7 +32,6 @@ export const createProduct = async (req, res) => {
   try {
     const {
       categoryId,
-      subcategoryId,
       categorySlug,
       type = "sparepart",
       name,
@@ -63,13 +62,6 @@ export const createProduct = async (req, res) => {
     if (!category) {
       return res.status(400).json({ message: "Select a valid category for this product." });
     }
-    const subcategory = type === "machine" && subcategoryId
-      ? await Subcategory.findOne({ _id: subcategoryId, category: category._id })
-      : null;
-    if (type === "machine" && subcategoryId && !subcategory) {
-      return res.status(400).json({ message: "Select a subcategory from the chosen category." });
-    }
-
     const priceValue = Number(price);
     if (!Number.isFinite(priceValue) || priceValue < 0) {
       return res.status(400).json({ message: "Price must be a non-negative number." });
@@ -85,7 +77,7 @@ export const createProduct = async (req, res) => {
       providedImages.push(image);
     }
     const productImages = type === "sparepart"
-      ? [...(req.uploadedImageUrls || []), ...providedImages]
+      ? [...providedImages, ...(req.uploadedImageUrls || [])]
       : req.uploadedImageUrls?.length
         ? req.uploadedImageUrls
         : providedImages.length
@@ -101,7 +93,6 @@ export const createProduct = async (req, res) => {
     const product = await Product.create({
       type,
       category: category._id,
-      subcategory: subcategory?._id || null,
       name: name.trim(),
       slug: slugify(slug || name) || `product-${Date.now()}`,
       partCode: type === "machine" ? String(partCode).trim() : "",
@@ -175,10 +166,10 @@ export const updateProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ message: "Product not found." });
+    const previousImageUrls = new Set([product.image, ...(product.images || [])].filter(Boolean));
 
     const {
       categoryId,
-      subcategoryId,
       name,
       slug,
       partCode,
@@ -201,22 +192,6 @@ export const updateProduct = async (req, res) => {
       const category = await Category.findOne({ _id: categoryId, type: product.type });
       if (!category) return res.status(400).json({ message: "Select a valid category for this product." });
       product.category = category._id;
-    }
-    if (product.type === "machine" && subcategoryId !== undefined) {
-      if (!subcategoryId) {
-        product.subcategory = null;
-      } else {
-        const subcategory = await Subcategory.findOne({
-          _id: subcategoryId,
-          category: categoryId || product.category,
-        });
-        if (!subcategory) {
-          return res.status(400).json({ message: "Select a subcategory from the chosen category." });
-        }
-        product.subcategory = subcategory._id;
-      }
-    } else if (product.type === "machine" && categoryId) {
-      product.subcategory = null;
     }
     if (name !== undefined) {
       if (!name.trim()) return res.status(400).json({ message: "Product name is required." });
@@ -247,7 +222,7 @@ export const updateProduct = async (req, res) => {
     }
     if (req.uploadedImageUrls?.length || (product.type === "sparepart" && imageUrls !== undefined)) {
       const nextImages = product.type === "sparepart"
-        ? [...(req.uploadedImageUrls || []), ...providedImages]
+        ? [...providedImages, ...(req.uploadedImageUrls || [])]
         : req.uploadedImageUrls;
       const uniqueImages = [...new Set(nextImages)];
       const imageLimit = product.type === "sparepart" ? 5 : 10;
@@ -277,7 +252,6 @@ export const updateProduct = async (req, res) => {
       }
       if (inStock !== undefined) product.inStock = inStock !== false && inStock !== "false";
     } else {
-      product.subcategory = null;
       product.partCode = "";
       product.stock = 0;
       product.description = "";
@@ -286,8 +260,36 @@ export const updateProduct = async (req, res) => {
       product.inStock = true;
     }
 
+    const nextImageUrls = product.images || [];
+    let removedImageUrls = [...previousImageUrls]
+      .filter((imageUrl) => !nextImageUrls.includes(imageUrl));
     await product.save();
-    return res.status(200).json(await populateCategory(Product.findById(product._id)));
+    let imageCleanupFailed = false;
+    try {
+      if (removedImageUrls.length) {
+        const sharedProducts = await Product.find({
+          _id: { $ne: product._id },
+          $or: [
+            { image: { $in: removedImageUrls } },
+            { images: { $in: removedImageUrls } },
+          ],
+        }).select("image images").lean();
+        const sharedImageUrls = new Set(sharedProducts.flatMap((item) => [
+          item.image,
+          ...(item.images || []),
+        ]));
+        removedImageUrls = removedImageUrls.filter((imageUrl) => !sharedImageUrls.has(imageUrl));
+      }
+      await deleteCloudinaryImages(removedImageUrls);
+    } catch (error) {
+      imageCleanupFailed = true;
+      console.error("Product updated but removed Cloudinary images could not be cleaned up:", error);
+    }
+    const updatedProduct = await populateCategory(Product.findById(product._id));
+    return res.status(200).json({
+      ...(await updatedProduct.toJSON()),
+      ...(imageCleanupFailed ? { imageCleanupFailed: true } : {}),
+    });
   } catch (error) {
     return res.status(error.code === 11000 ? 409 : 500).json({
       message: error.code === 11000 ? "Product slug already exists." : "Failed to update product.",

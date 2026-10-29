@@ -38,7 +38,7 @@ const toPaise = (value) => {
  * items  – array of { name, itemCode, quantity, unitPrice (rupees float) }
  * Returns item and aggregate amounts as integer paise.
  */
-export const calculateQuotationTotals = (items) => {
+export const calculateQuotationTotalsFromPaise = (items, discount = {}) => {
   if (!Array.isArray(items) || items.length === 0) {
     throw Object.assign(
       new Error("A quotation must include at least one spare part."),
@@ -56,14 +56,14 @@ export const calculateQuotationTotals = (items) => {
         { status: 422 }
       );
     }
-    if (typeof item.unitPrice !== "number" || !Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+    const unitPricePaise = item.unitPricePaise ?? toPaise(item.unitPrice);
+    if (!Number.isSafeInteger(unitPricePaise) || unitPricePaise < 0) {
       throw Object.assign(
         new Error(`Part ${i + 1}: unit price must be a valid non-negative number.`),
         { status: 422 }
       );
     }
 
-    const unitPricePaise = toPaise(item.unitPrice);
     const totalPaise = unitPricePaise * qty;
 
     if (!Number.isSafeInteger(unitPricePaise) || !Number.isSafeInteger(totalPaise)) {
@@ -95,8 +95,52 @@ export const calculateQuotationTotals = (items) => {
     );
   }
 
-  return { items: priced, subtotalPaise, gstPaise, grandTotalPaise };
+  const discountType = discount.type || "none";
+  const discountValue = discount.value === undefined ? 0 : Number(discount.value);
+  if (!["none", "percentage", "fixed"].includes(discountType)) {
+    throw Object.assign(new Error("Choose a percentage or fixed-amount discount."), { status: 400 });
+  }
+  if (!Number.isFinite(discountValue) || discountValue < 0) {
+    throw Object.assign(new Error("Discount must be a non-negative number."), { status: 400 });
+  }
+  if (discountType === "percentage" && discountValue > 100) {
+    throw Object.assign(new Error("Percentage discount cannot exceed 100%."), { status: 400 });
+  }
+  if (discountType === "none" && discountValue !== 0) {
+    throw Object.assign(new Error("A no-discount quotation must have a discount value of zero."), { status: 400 });
+  }
+
+  const discountValuePaise = discountType === "fixed" ? toPaise(discountValue) : 0;
+  const discountPaise = discountType === "percentage"
+    ? Number((BigInt(grandTotalPaise) * BigInt(Math.round(discountValue * 100)) + 5000n) / 10000n)
+    : discountType === "fixed"
+      ? discountValuePaise
+      : 0;
+  if (!Number.isSafeInteger(discountPaise) || discountPaise > grandTotalPaise) {
+    throw Object.assign(new Error("Discount cannot exceed the total including GST."), { status: 400 });
+  }
+  const finalTotalPaise = grandTotalPaise - discountPaise;
+
+  return {
+    items: priced,
+    subtotalPaise,
+    gstPaise,
+    grandTotalPaise,
+    discountType,
+    discountValue,
+    discountValuePaise,
+    discountPaise,
+    finalTotalPaise,
+  };
 };
+
+export const calculateQuotationTotals = (items, discount = {}) =>
+  calculateQuotationTotalsFromPaise(
+    Array.isArray(items)
+      ? items.map((item) => ({ ...item, unitPricePaise: toPaise(item.unitPrice) }))
+      : items,
+    discount
+  );
 
 // ── HTML helpers ──────────────────────────────────────────────────────────────
 
@@ -145,9 +189,18 @@ const buildItemisedTable = (totals) => {
       ${rows}
       ${summaryRow("Subtotal", formatINR(totals.subtotalPaise))}
       ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
+      ${summaryRow("Grand Total (Including GST)", formatINR(totals.grandTotalPaise))}
+      ${summaryRow(
+        totals.discountType === "percentage"
+          ? `Discount (${totals.discountValue}%)`
+          : totals.discountType === "fixed"
+            ? `Discount (${formatINR(totals.discountValuePaise)})`
+            : "Discount",
+        `-${formatINR(totals.discountPaise)}`
+      )}
       <tr>
-        <td colspan="6" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Grand Total (Including GST)</td>
-        <td align="right" bgcolor="#faf5fb" style="padding:14px 10px;white-space:nowrap;font-weight:bold;font-size:17px;border-top:2px solid #66116f;color:#66116f;">${formatINR(totals.grandTotalPaise)}</td>
+        <td colspan="6" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Final Amount Due</td>
+        <td align="right" bgcolor="#faf5fb" style="padding:14px 10px;white-space:nowrap;font-weight:bold;font-size:17px;border-top:2px solid #66116f;color:#66116f;">${formatINR(totals.finalTotalPaise)}</td>
       </tr>
     </tbody>
   </table>`;
@@ -187,7 +240,7 @@ const bankDetails = [
   ["IFSC Code", "ICIC0001744"],
 ];
 
-export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, issuedAt = new Date()) => {
+export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, issuedAt = new Date(), customerPdfUrl = "") => {
   const date = formatQuotationDate(issuedAt);
   const subject = `Unipackauto Spare Parts Quote - ${quotationNumber}`;
   const textLines = [
@@ -215,6 +268,10 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
     `Subtotal: ${formatINR(totals.subtotalPaise)}`,
     `GST @ 18%: ${formatINR(totals.gstPaise)}`,
     `Grand Total (Including GST): ${formatINR(totals.grandTotalPaise)}`,
+    `Discount${totals.discountType === "percentage" ? ` (${totals.discountValue}%)` : totals.discountType === "fixed" ? ` (${formatINR(totals.discountValuePaise)})` : ""}: -${formatINR(totals.discountPaise)}`,
+    `Final Amount Due: ${formatINR(totals.finalTotalPaise)}`,
+    "Discount is applied after GST.",
+    ...(customerPdfUrl ? ["", `View or download your quotation PDF: ${customerPdfUrl}`] : []),
     "",
     "Commercial Terms & Conditions:",
     ...commercialTerms.map((term, index) => `${index + 1}. ${term}`),
@@ -311,6 +368,8 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
         <p style="margin:0 0 22px;font-size:14px;line-height:22px;color:#243047;">Please find below our offer for the required spare parts.</p>
         <h2 style="margin:0 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:18px;">Spare Part Quotation</h2>
         ${buildItemisedTable(totals)}
+        <p style="margin:12px 0;font-size:12px;color:#687185;">Discount is applied after GST.</p>
+        ${customerPdfUrl ? `<p style="margin:18px 0;"><a href="${esc(customerPdfUrl)}" style="display:inline-block;padding:11px 18px;background:#66116f;color:#fff;text-decoration:none;border-radius:4px;">View or download quotation PDF</a></p>` : ""}
         <h2 style="margin:28px 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:17px;">Commercial Terms &amp; Conditions</h2>
         <ol style="margin:0;padding-left:22px;font-size:13px;line-height:20px;color:#243047;">${termsHtml}</ol>
         <h2 style="margin:28px 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:17px;">Bank Details for Payment</h2>
@@ -351,7 +410,26 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const getEmailConfiguration = (env = process.env) => {
   const adminEmail = env.ADMIN_EMAIL?.trim();
 
-  // ── 1. Generic SMTP (smtp.gmail.com or any other host) ──────────────────────
+  // ── 1. Gmail shorthand takes precedence over stale generic SMTP settings ─────
+  const gmailUser = env.GMAIL_USER?.trim();
+  const gmailPass = env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
+
+  if (gmailUser || gmailPass) {
+    if (!gmailUser || !gmailPass)
+      throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD must both be set.");
+    if (!EMAIL_RE.test(gmailUser))
+      throw new Error("GMAIL_USER must be a valid Gmail address.");
+    const to = adminEmail || gmailUser;
+    if (!EMAIL_RE.test(to))
+      throw new Error("ADMIN_EMAIL must be a valid email address.");
+    return {
+      transport: { service: "gmail", auth: { user: gmailUser, pass: gmailPass } },
+      from: gmailUser,
+      to,
+    };
+  }
+
+  // ── 2. Generic SMTP (smtp.gmail.com or any other host) ──────────────────────
   if (env.SMTP_HOST?.trim()) {
     const host   = env.SMTP_HOST.trim();
     const port   = Number(env.SMTP_PORT || 587);
@@ -381,28 +459,9 @@ export const getEmailConfiguration = (env = process.env) => {
     };
   }
 
-  // ── 2. Gmail shorthand ───────────────────────────────────────────────────────
-  const gmailUser = env.GMAIL_USER?.trim();
-  const gmailPass = env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
-
-  if (gmailUser || gmailPass) {
-    if (!gmailUser || !gmailPass)
-      throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD must both be set.");
-    if (!EMAIL_RE.test(gmailUser))
-      throw new Error("GMAIL_USER must be a valid Gmail address.");
-    const to = adminEmail || gmailUser;
-    if (!EMAIL_RE.test(to))
-      throw new Error("ADMIN_EMAIL must be a valid email address.");
-    return {
-      transport: { service: "gmail", auth: { user: gmailUser, pass: gmailPass } },
-      from: gmailUser,
-      to,
-    };
-  }
-
   // ── 3. Nothing configured ────────────────────────────────────────────────────
   throw new Error(
-    "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM, and ADMIN_EMAIL in .env."
+    "Email is not configured. Set GMAIL_USER, GMAIL_APP_PASSWORD, and ADMIN_EMAIL, or configure SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM, and ADMIN_EMAIL."
   );
 };
 
@@ -473,7 +532,13 @@ export async function deliverEmailToRecipients(transporter, message, recipients)
   if (deliveryFailures.length) {
     throw Object.assign(
       new Error("The quotation email could not be delivered to every recipient."),
-      { code: "RECIPIENT_DELIVERY_FAILED", deliveryFailures }
+      {
+        code: "RECIPIENT_DELIVERY_FAILED",
+        deliveryFailures,
+        deliverySuccesses: results.flatMap((result, index) =>
+          result.status === "fulfilled" ? [uniqueRecipients[index]] : []
+        ),
+      }
     );
   }
 
@@ -507,6 +572,9 @@ export async function verifyQuoteEmail() {
  *   Each item: { name, itemCode, machine, quantity, unitPrice (rupees from MongoDB) }
  */
 export async function sendQuoteNotification(quote, pricedItems, quotationOptions = {}) {
+  if (quote.quoteType !== "sparePart") {
+    throw new Error("Only spare-part quote notifications are supported.");
+  }
   const customerEmail = String(quote.email || "").trim();
   if (!EMAIL_RE.test(customerEmail)) {
     throw Object.assign(new Error("A valid customer email address is required for the quotation."), {
@@ -514,87 +582,18 @@ export async function sendQuoteNotification(quote, pricedItems, quotationOptions
     });
   }
   const { config, transporter } = makeTransporter();
-  const isSparePart = quote.quoteType === "sparePart";
-  let totals = null;
-  let email;
-  if (isSparePart) {
-    totals = calculateQuotationTotals(pricedItems);
-    const issuedAt = quotationOptions.issuedAt || new Date();
-    const quotationNumber =
-      quotationOptions.quotationNumber || createQuotationNumber(quote.id || quote._id, issuedAt);
-    email = buildSparePartsQuotationEmail(quote, totals, quotationNumber, issuedAt);
-  } else {
-    const textLines = [
-      "A new machine quote request was submitted on the UnipackAuto website.",
-      "",
-      `Company    : ${quote.company}`,
-      `Contact    : ${quote.contactName}`,
-      `Email      : ${quote.email}`,
-      `Phone      : ${quote.phone}`,
-      `Location   : ${quote.city}, ${quote.state}`,
-      `Request ID : ${quote.id}`,
-      "",
-      "Machine Requirement",
-      `Machine type   : ${quote.machineType}`,
-      `Model          : ${quote.model}`,
-      `Quantity       : ${quote.quantity}`,
-      `Specifications : ${quote.specifications || "Not provided"}`,
-    ];
-    if (quote.message) textLines.push("", `Message: ${quote.message}`);
-    if (quote.attachment?.url) textLines.push(`Attachment: ${quote.attachment.url}`);
-
-    email = {
-      subject: `New machine quote from ${String(quote.company || "").replace(/[\r\n]/g, " ")} — ${quote.id}`,
-      text: textLines.join("\n"),
-      html: `<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;background:#f5f3f6;font-family:Arial,Helvetica,sans-serif;color:#29232b;">
-<div style="max-width:740px;margin:24px auto;padding:0 12px;">
-  <div style="background:#66116f;color:#fff;padding:22px 26px;border-radius:12px 12px 0 0;">
-    <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;">UnipackAuto · New Quote Request</div>
-    <h1 style="margin:8px 0 0;font-size:22px;color:#fff;">Machine Quote Request</h1>
-  </div>
-  <div style="background:#fff;padding:24px 26px;border:1px solid #ede8f0;border-top:0;">
-    <table role="presentation" cellspacing="0" cellpadding="0"
-      style="width:100%;margin-bottom:20px;font-size:14px;border-collapse:collapse;">
-      <tr>
-        <td style="padding:6px 0;color:#777;width:140px;">Company</td>
-        <td style="padding:6px 0;font-weight:600;color:#29232b;">${esc(quote.company)}</td>
-        <td style="padding:6px 0;color:#777;width:120px;">Contact</td>
-        <td style="padding:6px 0;color:#29232b;">${esc(quote.contactName)}</td>
-      </tr>
-      <tr>
-        <td style="padding:6px 0;color:#777;">Email</td>
-        <td style="padding:6px 0;"><a href="mailto:${esc(quote.email)}" style="color:#66116f;">${esc(quote.email)}</a></td>
-        <td style="padding:6px 0;color:#777;">Phone</td>
-        <td style="padding:6px 0;color:#29232b;">${esc(quote.phone)}</td>
-      </tr>
-      <tr>
-        <td style="padding:6px 0;color:#777;">Location</td>
-        <td style="padding:6px 0;color:#29232b;" colspan="3">${esc(quote.city)}, ${esc(quote.state)}</td>
-      </tr>
-      <tr>
-        <td style="padding:6px 0;color:#777;">Date</td>
-        <td style="padding:6px 0;color:#29232b;" colspan="3">${esc(formatQuotationDate(new Date()))}</td>
-      </tr>
-      <tr>
-        <td style="padding:6px 0;color:#777;">Request ID</td>
-        <td style="padding:6px 0;font-size:12px;color:#999;" colspan="3">${esc(quote.id)}</td>
-      </tr>
-    </table>
-    <h2 style="font-size:15px;margin:20px 0 12px;color:#4a1155;">Machine Requirement</h2>
-    <p style="color:#29232b;">Machine: ${esc(quote.machineType)} · Model: ${esc(quote.model)} · Quantity: ${esc(quote.quantity)}</p>
-    <p style="color:#29232b;">Specifications: ${esc(quote.specifications || "Not provided")}</p>
-    ${quote.message ? `<p style="margin-top:18px;padding:14px;background:#faf7fb;border-left:3px solid #66116f;font-size:13px;color:#444;">${esc(quote.message)}</p>` : ""}
-    ${quote.attachment?.url ? `<p style="font-size:12px;color:#777;margin-top:12px;">📎 Attachment: <a href="${esc(quote.attachment.url)}" style="color:#66116f;">${esc(quote.attachment.name || "View file")}</a></p>` : ""}
-    <p style="margin-top:24px;font-size:13px;color:#888;">Reply to this email to respond directly to the customer at <a href="mailto:${esc(quote.email)}" style="color:#66116f;">${esc(quote.email)}</a>.</p>
-  </div>
-  <div style="padding:14px 20px;color:#aaa;font-size:11px;text-align:center;">UnipackAuto · Packaging Automation Solutions · Bhiwadi, Rajasthan, India</div>
-</div>
- </body></html>`,
-    };
-  }
+  const totals = quotationOptions.totals ||
+    calculateQuotationTotals(pricedItems, quotationOptions.discount);
+  const issuedAt = quotationOptions.issuedAt || new Date();
+  const quotationNumber =
+    quotationOptions.quotationNumber || createQuotationNumber(quote.id || quote._id, issuedAt);
+  const email = buildSparePartsQuotationEmail(
+    quote,
+    totals,
+    quotationNumber,
+    issuedAt,
+    quotationOptions.customerPdfUrl
+  );
 
   const delivery = await deliverEmailToRecipients(transporter, {
     from: `"UnipackAuto Enquiries" <${config.from}>`,
@@ -602,10 +601,20 @@ export async function sendQuoteNotification(quote, pricedItems, quotationOptions
     subject: email.subject,
     text: email.text,
     html: email.html,
+    ...(quotationOptions.pdfBuffer
+      ? {
+          attachments: [{
+            filename: `${quotationNumber.replace(/[^a-z0-9-]/gi, "-")}.pdf`,
+            content: quotationOptions.pdfBuffer,
+            contentType: "application/pdf",
+          }],
+        }
+      : {}),
   }, [config.to, customerEmail]);
   return {
     ...delivery,
-    ...(totals ? { totals, quotationNumber: email.quotationNumber } : {}),
+    totals,
+    quotationNumber: email.quotationNumber,
   };
 }
 

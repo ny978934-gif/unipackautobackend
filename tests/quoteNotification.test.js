@@ -10,6 +10,7 @@ import {
   getEmailConfiguration,
   sendQuoteNotification,
 } from "../services/quoteNotification.js";
+import { buildQuotationPdf } from "../services/quotePdf.js";
 
 test("configures Gmail notifications and removes spaces from grouped app passwords", () => {
   const config = getEmailConfiguration({
@@ -120,6 +121,7 @@ test("attempts delivery to both recipients and reports partial delivery failures
     ]),
     (error) => {
       assert.equal(error.code, "RECIPIENT_DELIVERY_FAILED");
+      assert.deepEqual(error.deliverySuccesses, ["sales@unipackauto.in"]);
       assert.match(describeEmailFailure(error), /customer@example\.com/);
       assert.match(describeEmailFailure(error), /SMTP server/);
       return true;
@@ -130,8 +132,15 @@ test("attempts delivery to both recipients and reports partial delivery failures
 
 test("rejects an invalid customer email before attempting SMTP delivery", async () => {
   await assert.rejects(
-    sendQuoteNotification({ email: "not-an-email" }),
+    sendQuoteNotification({ quoteType: "sparePart", email: "not-an-email" }),
     { status: 400, message: "A valid customer email address is required for the quotation." }
+  );
+});
+
+test("does not send new machine quote notifications", async () => {
+  await assert.rejects(
+    sendQuoteNotification({ quoteType: "machine" }),
+    /Only spare-part quote notifications are supported/
   );
 });
 
@@ -167,6 +176,63 @@ test("calculates item totals, subtotal, 18% GST, and grand total in integer pais
   assert.equal(formatINR(totals.subtotalPaise), "₹10,000.00");
   assert.equal(formatINR(totals.gstPaise), "₹1,800.00");
   assert.equal(formatINR(totals.grandTotalPaise), "₹11,800.00");
+});
+
+test("applies percentage and fixed discounts after GST", () => {
+  const items = [{ name: "Part", quantity: 1, unitPrice: 200 }];
+  const percentage = calculateQuotationTotals(items, { type: "percentage", value: 10 });
+  assert.equal(percentage.subtotalPaise, 20000);
+  assert.equal(percentage.gstPaise, 3600);
+  assert.equal(percentage.grandTotalPaise, 23600);
+  assert.equal(percentage.discountPaise, 2360);
+  assert.equal(percentage.finalTotalPaise, 21240);
+
+  const fixed = calculateQuotationTotals(items, { type: "fixed", value: 20 });
+  assert.equal(fixed.discountPaise, 2000);
+  assert.equal(fixed.finalTotalPaise, 21600);
+});
+
+test("rejects discounts above the tax-inclusive total and percentages above 100", () => {
+  const items = [{ name: "Part", quantity: 1, unitPrice: 200 }];
+  assert.throws(
+    () => calculateQuotationTotals(items, { type: "fixed", value: 236.01 }),
+    /Discount cannot exceed the total including GST/
+  );
+  assert.throws(
+    () => calculateQuotationTotals(items, { type: "percentage", value: 100.01 }),
+    /Percentage discount cannot exceed 100%/
+  );
+});
+
+test("generates a valid multi-page PDF with the complete discount breakdown", () => {
+  const issuedAt = new Date("2026-10-12T12:00:00.000Z");
+  const quote = {
+    id: "507f1f77bcf86cd799439011",
+    company: "Example Packaging",
+    contactName: "A. Customer",
+    email: "customer@example.com",
+    phone: "+91 98765 43210",
+    city: "Bhiwadi",
+    state: "Rajasthan",
+    quotation: { number: "UPK/Spare/Quote/Oct-26/d799439011", sentAt: issuedAt },
+  };
+  const items = Array.from({ length: 90 }, (_, index) => ({
+    name: `Part ${index + 1}`,
+    itemCode: `P-${index + 1}`,
+    quantity: 1,
+    unitPrice: 100,
+  }));
+  const totals = calculateQuotationTotals(items, { type: "percentage", value: 10 });
+  const pdf = buildQuotationPdf(quote, totals);
+  const content = pdf.toString("latin1");
+  const startXref = Number(content.match(/startxref\n(\d+)/)?.[1]);
+  assert.ok(pdf.subarray(0, 8).toString("ascii").startsWith("%PDF-1.4"));
+  assert.match(content, /\/Count [2-9]\d*/);
+  assert.equal(pdf.subarray(startXref, startXref + 4).toString("ascii"), "xref");
+  assert.match(content, /Subtotal: Rs 9,000\.00/);
+  assert.match(content, /GST @ 18%: Rs 1,620\.00/);
+  assert.match(content, /Discount \(10%\): Rs 1,062\.00/);
+  assert.match(content, /FINAL AMOUNT DUE: Rs 9,558\.00/);
 });
 
 test("rounds unit prices to paise before multiplying quantities", () => {

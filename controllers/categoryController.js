@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import Category from "../models/Category.js";
 import Product from "../models/Product.js";
-import Subcategory from "../models/Subcategory.js";
 
 const slugify = (value) =>
   value
@@ -148,10 +147,6 @@ export const updateCategory = async (req, res) => {
 
     if (updateData.type) {
       await Product.updateMany({ category: category._id }, { $set: { type: category.type } });
-      if (category.type === "machine") {
-        await Product.updateMany({ category: category._id }, { $set: { subcategory: null } });
-        await Subcategory.deleteMany({ category: category._id });
-      }
     }
 
     res.status(200).json(category);
@@ -174,7 +169,6 @@ export const deleteCategory = async (req, res) => {
     }
 
     await Product.deleteMany({ category: id });
-    await Subcategory.deleteMany({ category: id });
 
     res.status(200).json({ message: "Category deleted successfully" });
   } catch (error) {

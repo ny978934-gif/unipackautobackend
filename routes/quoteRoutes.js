@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
@@ -11,9 +11,12 @@ import cloudinary, { isConfigured } from "../config/cloudinary.js";
 import { uploadsDirectory } from "../config/uploads.js";
 import {
   createQuotationNumber,
+  calculateQuotationTotals,
+  calculateQuotationTotalsFromPaise,
   describeEmailFailure,
   sendQuoteNotification,
 } from "../services/quoteNotification.js";
+import { buildQuotationPdf } from "../services/quotePdf.js";
 
 const router = Router();
 const maximumAttachmentSize = 10 * 1024 * 1024;
@@ -81,10 +84,106 @@ const readQuantity = (value, field) => {
   return quantity;
 };
 
-const validateQuote = (body) => {
-  const quoteType = body.quoteType;
-  if (!["sparePart", "machine"].includes(quoteType)) {
-    throw new QuoteInputError("Choose either a spare part or machine quote.");
+const hashCustomerAccessToken = (token) =>
+  createHash("sha256").update(token).digest("hex");
+
+const customerPdfUrl = (quoteId, token) => {
+  const frontendBase = (
+    process.env.PUBLIC_FRONTEND_URL ||
+    "https://unipackauto.vercel.app"
+  ).replace(/\/+$/, "");
+  const url = new URL(`/quotation/${quoteId}`, frontendBase);
+  url.hash = new URLSearchParams({ "customer-token": token }).toString();
+  return url.toString();
+};
+
+const applyQuotationTotals = (quote, totals, quotationNumber, issuedAt) => {
+  quote.quotation.number = quotationNumber;
+  quote.quotation.sentAt = issuedAt;
+  quote.quotation.items = totals.items.map((item) => ({
+    name: item.name,
+    itemCode: item.itemCode || "",
+    machine: item.machine || "",
+    quantity: item.quantity,
+    unitPricePaise: item.unitPricePaise,
+  }));
+  quote.quotation.subtotalCents = totals.subtotalPaise;
+  quote.quotation.gstCents = totals.gstPaise;
+  quote.quotation.grossTotalCents = totals.grandTotalPaise;
+  quote.quotation.discountType = totals.discountType;
+  quote.quotation.discountValue = totals.discountValue;
+  quote.quotation.discountCents = totals.discountPaise;
+  quote.quotation.finalTotalCents = totals.finalTotalPaise;
+};
+
+const getQuotationTotals = async (quote) => {
+  const discount = {
+    type: quote.quotation?.discountType || "none",
+    value: quote.quotation?.discountValue || 0,
+  };
+  if (quote.quotation?.items?.length) {
+    return calculateQuotationTotalsFromPaise(
+      quote.quotation.items.map((item) => ({
+        ...(item.toObject?.() ?? item),
+        unitPricePaise: item.unitPricePaise,
+      })),
+      discount
+    );
+  }
+  const pricedItems = await enrichPartsWithPrices(quote.parts || []);
+  return calculateQuotationTotals(pricedItems, discount);
+};
+
+const sendUpdatedQuotation = async (quote, totals, { accessToken, issuedAt }) => {
+  const quotationNumber = quote.quotation.number || createQuotationNumber(quote.id, issuedAt);
+  const previousTokenHash = quote.customerAccessTokenHash;
+  applyQuotationTotals(quote, totals, quotationNumber, issuedAt);
+  quote.customerAccessTokenHash = hashCustomerAccessToken(accessToken);
+  quote.notificationStatus = "pending";
+  quote.notificationError = "";
+  await quote.save();
+
+  let customerReceivedEmail = false;
+  try {
+    const pdfBuffer = buildQuotationPdf(quote, totals);
+    const pdfUrl = customerPdfUrl(quote.id, accessToken);
+    await sendQuoteNotification(quote, [], {
+      totals,
+      quotationNumber,
+      issuedAt,
+      discount: {
+        type: totals.discountType,
+        value: totals.discountValue,
+      },
+      pdfBuffer,
+      customerPdfUrl: pdfUrl,
+    });
+    customerReceivedEmail = true;
+    quote.notificationStatus = "sent";
+    quote.notificationError = "";
+    await quote.save();
+    return { notificationSent: true, request: quote };
+  } catch (error) {
+    quote.notificationStatus = "failed";
+    quote.notificationError = describeEmailFailure(error);
+    customerReceivedEmail = customerReceivedEmail || Boolean(error.deliverySuccesses?.some(
+      (recipient) => recipient.toLowerCase() === quote.email.toLowerCase()
+    ));
+    if (previousTokenHash && !customerReceivedEmail) {
+      quote.customerAccessTokenHash = previousTokenHash;
+    }
+    await quote.save();
+    console.error(`Updated quotation email failed for ${quote.id}:`, {
+      message: error.message,
+      guidance: quote.notificationError,
+    });
+    return { notificationSent: false, notificationError: quote.notificationError, request: quote };
+  }
+};
+
+export const validateQuote = (body) => {
+  if (body.quoteType !== "sparePart") {
+    throw new QuoteInputError("Only spare-part quote requests are accepted.");
   }
   const email = readText(body.email, "Email address", 254).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -95,7 +194,7 @@ const validateQuote = (body) => {
     throw new QuoteInputError("Please provide a valid phone number.");
   }
   const quote = {
-    quoteType,
+    quoteType: "sparePart",
     company: readText(body.company, "Company name", 200),
     contactName: readText(body.contactName, "Contact person name", 160),
     email,
@@ -105,41 +204,34 @@ const validateQuote = (body) => {
     message: optionalText(body.message, "Message", 4000),
   };
 
-  if (quoteType === "machine") {
-    quote.machineType = readText(body.machineType, "Machine type", 150);
-    quote.model = readText(body.model, "Model", 150);
-    quote.quantity = readQuantity(body.quantity, "Quantity");
-    quote.specifications = optionalText(body.specifications, "Specifications", 4000);
-  } else {
-    let parts;
-    try {
-      parts = JSON.parse(body.parts);
-    } catch {
-      throw new QuoteInputError("Add at least one valid spare part.");
+  let parts;
+  try {
+    parts = JSON.parse(body.parts);
+  } catch {
+    throw new QuoteInputError("Add at least one valid spare part.");
+  }
+  if (!Array.isArray(parts) || parts.length < 1 || parts.length > 30) {
+    throw new QuoteInputError("A quote must include between 1 and 30 spare parts.");
+  }
+  quote.parts = parts.map((part, index) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) {
+      throw new QuoteInputError(`Part ${index + 1} must contain valid spare part details.`);
     }
-    if (!Array.isArray(parts) || parts.length < 1 || parts.length > 30) {
-      throw new QuoteInputError("A quote must include between 1 and 30 spare parts.");
-    }
-    quote.parts = parts.map((part, index) => {
-      if (!part || typeof part !== "object" || Array.isArray(part)) {
-        throw new QuoteInputError(`Part ${index + 1} must contain valid spare part details.`);
-      }
-      return {
-        machine: readText(
-          part.machine || [part.machineCategory, part.machineName].filter(Boolean).join(" / "),
-          `Part ${index + 1} machine category / name`,
-          300
-        ),
-        partName: readText(part.partName, `Part ${index + 1} spare part name`, 150),
-        itemCode: optionalText(part.itemCode, `Part ${index + 1} item code`, 100),
-        productId: part.partId || part.productId || null,
-        quantity: readQuantity(part.quantity, `Part ${index + 1} quantity`),
-      };
-    });
-    for (const [index, part] of quote.parts.entries()) {
-      if (part.productId && !/^[0-9a-fA-F]{24}$/.test(String(part.productId))) {
-        throw new QuoteInputError(`Part ${index + 1} has an invalid spare part selection.`);
-      }
+    return {
+      machine: readText(
+        part.machine || [part.machineCategory, part.machineName].filter(Boolean).join(" / "),
+        `Part ${index + 1} machine category / name`,
+        300
+      ),
+      partName: readText(part.partName, `Part ${index + 1} spare part name`, 150),
+      itemCode: optionalText(part.itemCode, `Part ${index + 1} item code`, 100),
+      productId: part.partId || part.productId || null,
+      quantity: readQuantity(part.quantity, `Part ${index + 1} quantity`),
+    };
+  });
+  for (const [index, part] of quote.parts.entries()) {
+    if (part.productId && !/^[0-9a-fA-F]{24}$/.test(String(part.productId))) {
+      throw new QuoteInputError(`Part ${index + 1} has an invalid spare part selection.`);
     }
   }
   return quote;
@@ -248,7 +340,7 @@ router.post("/", parseAttachment, async (req, res) => {
     // ── Enrich spare-part rows with catalogue prices from MongoDB ──────────────
     let pricedItems = null;
     let pricingError = null;
-    if (savedQuote.quoteType === "sparePart" && savedQuote.parts?.length) {
+    if (savedQuote.parts?.length) {
       try {
         pricedItems = await enrichPartsWithPrices(savedQuote.parts);
       } catch (err) {
@@ -257,46 +349,22 @@ router.post("/", parseAttachment, async (req, res) => {
       }
     }
 
-    let notificationSent = true;
-    try {
-      if (pricingError) throw pricingError;
-      const issuedAt = new Date();
-      const quotationNumber = savedQuote.quoteType === "sparePart"
-        ? createQuotationNumber(savedQuote.id, issuedAt)
-        : undefined;
-      const emailInfo = await sendQuoteNotification(savedQuote, pricedItems, {
-        quotationNumber,
-        issuedAt,
-      });
-      savedQuote.notificationStatus = "sent";
-      savedQuote.notificationError = "";
-      if (emailInfo.totals && quotationNumber) {
-        savedQuote.quotation.number = quotationNumber;
-        savedQuote.quotation.sentAt = issuedAt;
-        savedQuote.quotation.subtotalCents = emailInfo.totals.subtotalPaise;
-        savedQuote.quotation.gstCents = emailInfo.totals.gstPaise;
-        savedQuote.quotation.grossTotalCents = emailInfo.totals.grandTotalPaise;
-      }
-      console.info(`Quote notification sent for ${savedQuote.id}:`, {
-        messageId: emailInfo.messageId,
-        accepted:  emailInfo.accepted,
-        response:  emailInfo.response,
-      });
-    } catch (error) {
-      notificationSent = false;
+    let delivery;
+    if (pricingError) {
       savedQuote.notificationStatus = "failed";
-      savedQuote.notificationError = describeEmailFailure(error);
-      console.error(`Email notification failed for quote ${savedQuote.id}:`, {
-        code:         error.code || "UNKNOWN",
-        responseCode: error.responseCode || null,
-        message:      error.message,
-        guidance:     savedQuote.notificationError,
-      });
+      savedQuote.notificationError = describeEmailFailure(pricingError);
+      console.error(`Quotation pricing failed for ${savedQuote.id}:`, pricingError.message);
+    } else {
+      const issuedAt = new Date();
+      const totals = calculateQuotationTotals(pricedItems);
+      const accessToken = randomBytes(32).toString("base64url");
+      delivery = await sendUpdatedQuotation(savedQuote, totals, { accessToken, issuedAt });
     }
-    await savedQuote.save();
+    if (pricingError) await savedQuote.save();
     return res.status(201).json({
       message: "Quote request received.",
-      notificationSent,
+      notificationSent: delivery?.notificationSent ?? false,
+      notificationError: delivery?.notificationError || savedQuote.notificationError,
       requestId: savedQuote.id,
     });
   } catch (error) {
@@ -313,6 +381,106 @@ router.get("/", requireAdmin, async (_req, res) => {
   } catch (error) {
     console.error("Error fetching quote requests:", error);
     return res.status(500).json({ message: "Could not fetch quote requests." });
+  }
+});
+
+router.get("/public/:id/pdf", async (req, res) => {
+  const token = String(req.get("authorization") || "").match(/^Bearer ([A-Za-z0-9_-]{43})$/i)?.[1] || "";
+  if (!mongoose.isValidObjectId(req.params.id) || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    return res.status(404).json({ message: "Quotation not found." });
+  }
+  try {
+    const quote = await QuoteRequest.findById(req.params.id).select("+customerAccessTokenHash");
+    const storedHash = quote?.customerAccessTokenHash;
+    const suppliedHash = hashCustomerAccessToken(token);
+    if (
+      !quote ||
+      !storedHash ||
+      !/^[a-f0-9]{64}$/i.test(storedHash) ||
+      !timingSafeEqual(Buffer.from(storedHash, "hex"), Buffer.from(suppliedHash, "hex"))
+    ) {
+      return res.status(404).json({ message: "Quotation not found." });
+    }
+    const totals = await getQuotationTotals(quote);
+    const pdf = buildQuotationPdf(quote, totals);
+    const filename = `${(quote.quotation.number || "quotation").replace(/[^a-z0-9-]/gi, "-")}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", pdf.length);
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    return res.send(pdf);
+  } catch (error) {
+    console.error("Failed to generate customer quotation PDF:", error);
+    return res.status(500).json({ message: "Could not generate the quotation PDF." });
+  }
+});
+
+router.get("/:id/pdf", requireAdmin, async (req, res) => {
+  try {
+    const quote = await QuoteRequest.findById(req.params.id);
+    if (!quote || quote.quoteType !== "sparePart") {
+      return res.status(404).json({ message: "Spare-part quotation not found." });
+    }
+    const totals = await getQuotationTotals(quote);
+    const pdf = buildQuotationPdf(quote, totals);
+    const filename = `${(quote.quotation.number || "quotation").replace(/[^a-z0-9-]/gi, "-")}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", pdf.length);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.send(pdf);
+  } catch (error) {
+    if (error.name === "CastError") return res.status(404).json({ message: "Quotation not found." });
+    console.error("Failed to generate admin quotation PDF:", error);
+    return res.status(500).json({ message: "Could not generate the quotation PDF." });
+  }
+});
+
+router.patch("/:id/discount", requireAdmin, async (req, res) => {
+  const discountType = req.body?.discountType;
+  const discountValue = Number(req.body?.discountValue);
+  if (!["none", "percentage", "fixed"].includes(discountType)) {
+    return res.status(400).json({ message: "Choose no discount, percentage, or fixed amount." });
+  }
+  if (!Number.isFinite(discountValue) || discountValue < 0) {
+    return res.status(400).json({ message: "Enter a valid non-negative discount." });
+  }
+  if ((discountType === "none" && discountValue !== 0) ||
+      (discountType === "percentage" && discountValue > 100)) {
+    return res.status(400).json({ message: "Discount percentage must be from 0 to 100; no discount must be zero." });
+  }
+
+  try {
+    const quote = await QuoteRequest.findById(req.params.id).select("+customerAccessTokenHash");
+    if (!quote || quote.quoteType !== "sparePart") {
+      return res.status(404).json({ message: "Spare-part quote request not found." });
+    }
+    quote.quotation.discountType = discountType;
+    quote.quotation.discountValue = discountValue;
+    const totals = await getQuotationTotals(quote);
+    const accessToken = randomBytes(32).toString("base64url");
+    const delivery = await sendUpdatedQuotation(quote, totals, {
+      accessToken,
+      issuedAt: new Date(),
+    });
+    return res.json({
+      message: delivery.notificationSent
+        ? "Discount saved and updated quotation emailed to the customer."
+        : "Discount saved, but the updated quotation email could not be delivered.",
+      notificationSent: delivery.notificationSent,
+      notificationError: delivery.notificationError || "",
+      request: (() => {
+        const request = delivery.request.toObject();
+        delete request.customerAccessTokenHash;
+        return request;
+      })(),
+    });
+  } catch (error) {
+    if (error.name === "CastError") return res.status(404).json({ message: "Quote request not found." });
+    if (error.status) return res.status(error.status).json({ message: error.message });
+    console.error("Failed to apply quotation discount:", error);
+    return res.status(500).json({ message: "Could not apply the quotation discount." });
   }
 });
 
