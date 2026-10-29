@@ -77,7 +77,6 @@ const quoteRequestSchema = new mongoose.Schema(
       discountCents: { type: Number, min: 0, default: 0 },
       finalTotalCents: { type: Number, min: 0, default: null },
     },
-    customerAccessTokenHash: { type: String, select: false },
   },
   { timestamps: true }
 );

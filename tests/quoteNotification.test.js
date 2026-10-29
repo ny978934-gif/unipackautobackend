@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildSparePartsQuotationEmail,
+  buildQuoteRequestConfirmationEmail,
   calculateQuotationTotals,
   createQuotationNumber,
   deliverEmailToRecipients,
   describeEmailFailure,
   formatINR,
   getEmailConfiguration,
-  sendQuoteNotification,
+  sendQuoteRequestConfirmation,
 } from "../services/quoteNotification.js";
 import { buildQuotationPdf } from "../services/quotePdf.js";
 
@@ -27,7 +28,7 @@ test("configures Gmail notifications and removes spaces from grouped app passwor
     auth: { user: "quotes@unipackauto.in", pass: "abcdefghijklmnop" },
   });
   assert.equal(config.from, "quotes@unipackauto.in");
-  assert.equal(config.to, "quotes@unipackauto.in");
+  assert.equal(config.to, "old-sender@example.com");
 });
 
 test("rejects partially configured Gmail credentials", () => {
@@ -37,7 +38,17 @@ test("rejects partially configured Gmail credentials", () => {
   );
 });
 
-test("sends Gmail notifications to the separately configured admin address", () => {
+test("sends Gmail notifications to SMTP_USER instead of ADMIN_EMAIL when configured", () => {
+  const config = getEmailConfiguration({
+    GMAIL_USER: "quotes@unipackauto.in",
+    GMAIL_APP_PASSWORD: "abcdefghijklmnop",
+    ADMIN_EMAIL: "sales@unipackauto.in",
+    SMTP_USER: "owner@unipackauto.in",
+  });
+  assert.equal(config.to, "owner@unipackauto.in");
+});
+
+test("falls back to ADMIN_EMAIL when SMTP_USER is not configured", () => {
   const config = getEmailConfiguration({
     GMAIL_USER: "quotes@unipackauto.in",
     GMAIL_APP_PASSWORD: "abcdefghijklmnop",
@@ -130,16 +141,31 @@ test("attempts delivery to both recipients and reports partial delivery failures
   assert.deepEqual(attemptedRecipients, ["sales@unipackauto.in", "customer@example.com"]);
 });
 
+test("builds a simple submission confirmation without quotation totals or PDF links", () => {
+  const email = buildQuoteRequestConfirmationEmail({
+    id: "request-123",
+    company: "Example Packaging",
+    contactName: "A. Customer",
+    email: "customer@example.com",
+  });
+  assert.equal(email.subject, "We received your spare parts quotation request");
+  assert.match(email.text, /We have received the spare parts quotation request/);
+  assert.match(email.text, /Request ID: request-123/);
+  assert.doesNotMatch(email.text, /Grand Total|Discount|PDF|View or download/i);
+  assert.doesNotMatch(email.html, /href=.*quotation|application\/pdf/i);
+  assert.equal("attachments" in email, false);
+});
+
 test("rejects an invalid customer email before attempting SMTP delivery", async () => {
   await assert.rejects(
-    sendQuoteNotification({ quoteType: "sparePart", email: "not-an-email" }),
+    sendQuoteRequestConfirmation({ quoteType: "sparePart", email: "not-an-email" }),
     { status: 400, message: "A valid customer email address is required for the quotation." }
   );
 });
 
 test("does not send new machine quote notifications", async () => {
   await assert.rejects(
-    sendQuoteNotification({ quoteType: "machine" }),
+    sendQuoteRequestConfirmation({ quoteType: "machine" }),
     /Only spare-part quote notifications are supported/
   );
 });
@@ -151,7 +177,7 @@ test("retains custom SMTP configuration when Gmail credentials are not set", () 
     SMTP_HOST: "smtp.example.com",
     SMTP_PORT: "465",
     SMTP_SECURE: "true",
-    SMTP_USER: "smtp-user",
+    SMTP_USER: "sales@unipackauto.in",
     SMTP_PASS: "smtp-password",
   });
 
@@ -159,8 +185,9 @@ test("retains custom SMTP configuration when Gmail credentials are not set", () 
     host: "smtp.example.com",
     port: 465,
     secure: true,
-    auth: { user: "smtp-user", pass: "smtp-password" },
+    auth: { user: "sales@unipackauto.in", pass: "smtp-password" },
   });
+  assert.equal(config.to, "sales@unipackauto.in");
 });
 
 test("calculates item totals, subtotal, 18% GST, and grand total in integer paise", () => {
@@ -190,6 +217,36 @@ test("applies percentage and fixed discounts after GST", () => {
   const fixed = calculateQuotationTotals(items, { type: "fixed", value: 20 });
   assert.equal(fixed.discountPaise, 2000);
   assert.equal(fixed.finalTotalPaise, 21600);
+});
+
+test("final quotation email includes the discount and amount due without customer PDF links", () => {
+  const quote = {
+    id: "request-123",
+    company: "Example Packaging",
+    contactName: "A. Customer",
+    email: "customer@example.com",
+    phone: "+91 98765 43210",
+    city: "Bhiwadi",
+    state: "Rajasthan",
+    parts: [],
+  };
+  const totals = calculateQuotationTotals(
+    [{ name: "Feed roller", itemCode: "FR-01", quantity: 1, unitPrice: 200 }],
+    { type: "percentage", value: 10 }
+  );
+  const email = buildSparePartsQuotationEmail(
+    quote,
+    totals,
+    "UPK/Spare/Quote/Oct-26/request-123",
+    new Date("2026-10-29T00:00:00.000Z")
+  );
+
+  assert.match(email.text, /Discount \(10%\): -₹23\.60/);
+  assert.match(email.text, /Final Amount Due: ₹212\.40/);
+  assert.match(email.html, /Discount \(10%\)/);
+  assert.match(email.html, /Final Amount Due/);
+  assert.doesNotMatch(email.text, /View or download|quotation PDF/i);
+  assert.doesNotMatch(email.html, /View or download|quotation PDF/i);
 });
 
 test("rejects discounts above the tax-inclusive total and percentages above 100", () => {
@@ -327,6 +384,8 @@ test("builds the branded spare-parts quotation email with request details and su
     "Subtotal",
     "GST @ 18%",
     "Grand Total (Including GST)",
+    "Discount",
+    "Final Amount Due",
     "₹5,500.00",
     "₹990.00",
     "₹6,490.00",
@@ -341,6 +400,8 @@ test("builds the branded spare-parts quotation email with request details and su
   ]) {
     assert.ok(email.html.includes(value), `expected HTML email to contain: ${value}`);
   }
+  assert.doesNotMatch(email.html, /View or download quotation PDF/);
+  assert.doesNotMatch(email.text, /View or download your quotation PDF/);
   assert.ok(
     email.html.indexOf("Customer Details") < email.html.indexOf("Dear Sir/Madam,"),
     "customer details should appear before the greeting"

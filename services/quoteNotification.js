@@ -240,7 +240,7 @@ const bankDetails = [
   ["IFSC Code", "ICIC0001744"],
 ];
 
-export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, issuedAt = new Date(), customerPdfUrl = "") => {
+export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, issuedAt = new Date()) => {
   const date = formatQuotationDate(issuedAt);
   const subject = `Unipackauto Spare Parts Quote - ${quotationNumber}`;
   const textLines = [
@@ -271,7 +271,6 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
     `Discount${totals.discountType === "percentage" ? ` (${totals.discountValue}%)` : totals.discountType === "fixed" ? ` (${formatINR(totals.discountValuePaise)})` : ""}: -${formatINR(totals.discountPaise)}`,
     `Final Amount Due: ${formatINR(totals.finalTotalPaise)}`,
     "Discount is applied after GST.",
-    ...(customerPdfUrl ? ["", `View or download your quotation PDF: ${customerPdfUrl}`] : []),
     "",
     "Commercial Terms & Conditions:",
     ...commercialTerms.map((term, index) => `${index + 1}. ${term}`),
@@ -369,7 +368,6 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
         <h2 style="margin:0 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:18px;">Spare Part Quotation</h2>
         ${buildItemisedTable(totals)}
         <p style="margin:12px 0;font-size:12px;color:#687185;">Discount is applied after GST.</p>
-        ${customerPdfUrl ? `<p style="margin:18px 0;"><a href="${esc(customerPdfUrl)}" style="display:inline-block;padding:11px 18px;background:#66116f;color:#fff;text-decoration:none;border-radius:4px;">View or download quotation PDF</a></p>` : ""}
         <h2 style="margin:28px 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:17px;">Commercial Terms &amp; Conditions</h2>
         <ol style="margin:0;padding-left:22px;font-size:13px;line-height:20px;color:#243047;">${termsHtml}</ol>
         <h2 style="margin:28px 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:17px;">Bank Details for Payment</h2>
@@ -409,6 +407,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const getEmailConfiguration = (env = process.env) => {
   const adminEmail = env.ADMIN_EMAIL?.trim();
+  const smtpUser = env.SMTP_USER?.trim();
+  const ownerEmail = smtpUser || adminEmail;
 
   // ── 1. Gmail shorthand takes precedence over stale generic SMTP settings ─────
   const gmailUser = env.GMAIL_USER?.trim();
@@ -419,9 +419,9 @@ export const getEmailConfiguration = (env = process.env) => {
       throw new Error("GMAIL_USER and GMAIL_APP_PASSWORD must both be set.");
     if (!EMAIL_RE.test(gmailUser))
       throw new Error("GMAIL_USER must be a valid Gmail address.");
-    const to = adminEmail || gmailUser;
+    const to = ownerEmail || gmailUser;
     if (!EMAIL_RE.test(to))
-      throw new Error("ADMIN_EMAIL must be a valid email address.");
+      throw new Error("SMTP_USER, ADMIN_EMAIL, or GMAIL_USER must be a valid email address.");
     return {
       transport: { service: "gmail", auth: { user: gmailUser, pass: gmailPass } },
       from: gmailUser,
@@ -434,12 +434,12 @@ export const getEmailConfiguration = (env = process.env) => {
     const host   = env.SMTP_HOST.trim();
     const port   = Number(env.SMTP_PORT || 587);
     const secure = String(env.SMTP_SECURE || "").toLowerCase() === "true";
-    const user   = env.SMTP_USER?.trim();
+    const user   = smtpUser;
     const pass   = env.SMTP_PASS?.trim();
     const from   = (env.EMAIL_FROM?.trim()) || user;
 
-    if (!adminEmail || !EMAIL_RE.test(adminEmail))
-      throw new Error("ADMIN_EMAIL must be a valid email address.");
+    if (!ownerEmail || !EMAIL_RE.test(ownerEmail))
+      throw new Error("SMTP_USER or ADMIN_EMAIL must be a valid email address.");
     if (!from || !EMAIL_RE.test(from))
       throw new Error("EMAIL_FROM (or SMTP_USER) must be a valid email address.");
     if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -455,13 +455,13 @@ export const getEmailConfiguration = (env = process.env) => {
         ...(user && pass ? { auth: { user, pass } } : {}),
       },
       from,
-      to: adminEmail,
+      to: ownerEmail,
     };
   }
 
   // ── 3. Nothing configured ────────────────────────────────────────────────────
   throw new Error(
-    "Email is not configured. Set GMAIL_USER, GMAIL_APP_PASSWORD, and ADMIN_EMAIL, or configure SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM, and ADMIN_EMAIL."
+    "Email is not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD, or configure SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and EMAIL_FROM. SMTP_USER is used as the owner notification recipient; ADMIN_EMAIL is the fallback."
   );
 };
 
@@ -565,13 +565,25 @@ export async function verifyQuoteEmail() {
 }
 
 /**
- * Send a new-quote-request notification email to the admin.
- *
- * @param {object}   quote      – saved QuoteRequest document
- * @param {Array}    [pricedItems] – optional pre-enriched items from MongoDB price lookup
- *   Each item: { name, itemCode, machine, quantity, unitPrice (rupees from MongoDB) }
+ * Build the short acknowledgement sent when a customer submits a request.
  */
-export async function sendQuoteNotification(quote, pricedItems, quotationOptions = {}) {
+export const buildQuoteRequestConfirmationEmail = (quote) => ({
+  subject: "We received your spare parts quotation request",
+  text: [
+    `Hello ${quote.contactName},`,
+    "",
+    `We have received the spare parts quotation request for ${quote.company}.`,
+    "Our team will review your request and contact you with a quotation.",
+    "",
+    `Request ID: ${quote.id || quote._id}`,
+    "",
+    "Thank you,",
+    "Unipackauto India Pvt. Ltd.",
+  ].join("\n"),
+  html: `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:600px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">Request received</td></tr><tr><td style="padding:28px;line-height:1.6;"><p>Hello ${esc(quote.contactName)},</p><p>We have received the spare parts quotation request for <strong>${esc(quote.company)}</strong>.</p><p>Our team will review your request and contact you with a quotation.</p><p style="color:#777;font-size:13px;">Request ID: ${esc(quote.id || quote._id)}</p><p>Thank you,<br><strong>Unipackauto India Pvt. Ltd.</strong></p></td></tr></table></body></html>`,
+});
+
+export async function sendQuoteRequestConfirmation(quote) {
   if (quote.quoteType !== "sparePart") {
     throw new Error("Only spare-part quote notifications are supported.");
   }
@@ -582,35 +594,44 @@ export async function sendQuoteNotification(quote, pricedItems, quotationOptions
     });
   }
   const { config, transporter } = makeTransporter();
-  const totals = quotationOptions.totals ||
-    calculateQuotationTotals(pricedItems, quotationOptions.discount);
-  const issuedAt = quotationOptions.issuedAt || new Date();
-  const quotationNumber =
-    quotationOptions.quotationNumber || createQuotationNumber(quote.id || quote._id, issuedAt);
-  const email = buildSparePartsQuotationEmail(
-    quote,
-    totals,
-    quotationNumber,
-    issuedAt,
-    quotationOptions.customerPdfUrl
-  );
+  const email = buildQuoteRequestConfirmationEmail(quote);
 
+  return deliverEmailToRecipients(transporter, {
+    from: `"UnipackAuto Enquiries" <${config.from}>`,
+    replyTo: quote.email,
+    subject: email.subject,
+    text: email.text,
+    html: email.html,
+  }, [config.to, customerEmail]);
+}
+
+export async function sendFinalQuotation(quote, totals, { quotationNumber, issuedAt, pdfBuffer }) {
+  if (quote.quoteType !== "sparePart") {
+    throw new Error("Only spare-part quotations are supported.");
+  }
+  const customerEmail = String(quote.email || "").trim();
+  if (!EMAIL_RE.test(customerEmail)) {
+    throw Object.assign(new Error("A valid customer email address is required for the quotation."), {
+      status: 400,
+    });
+  }
+  if (!Buffer.isBuffer(pdfBuffer) || !pdfBuffer.length) {
+    throw new Error("A generated quotation PDF is required before sending the final quotation.");
+  }
+  const { config, transporter } = makeTransporter();
+  const email = buildSparePartsQuotationEmail(quote, totals, quotationNumber, issuedAt);
   const delivery = await deliverEmailToRecipients(transporter, {
     from: `"UnipackAuto Enquiries" <${config.from}>`,
     replyTo: quote.email,
     subject: email.subject,
     text: email.text,
     html: email.html,
-    ...(quotationOptions.pdfBuffer
-      ? {
-          attachments: [{
-            filename: `${quotationNumber.replace(/[^a-z0-9-]/gi, "-")}.pdf`,
-            content: quotationOptions.pdfBuffer,
-            contentType: "application/pdf",
-          }],
-        }
-      : {}),
-  }, [config.to, customerEmail]);
+    attachments: [{
+      filename: `${quotationNumber.replace(/[^a-z0-9-]/gi, "-")}.pdf`,
+      content: pdfBuffer,
+      contentType: "application/pdf",
+    }],
+  }, [customerEmail]);
   return {
     ...delivery,
     totals,
@@ -618,7 +639,7 @@ export async function sendQuoteNotification(quote, pricedItems, quotationOptions
   };
 }
 
-/** SMTP connection test — sends a plain test message to ADMIN_EMAIL. */
+/** SMTP connection test — sends a plain test message to the configured owner recipient. */
 export async function sendQuoteEmailTest() {
   const { config, transporter } = makeTransporter();
   const info = await transporter.sendMail({

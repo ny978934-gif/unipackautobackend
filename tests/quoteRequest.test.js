@@ -55,7 +55,7 @@ test("quote request schema validates spare part quantities and request status", 
   assert.ok(validationError.errors.status);
 });
 
-test("quotation snapshot, discount, and customer token hash fields validate", () => {
+test("quotation snapshot and discount fields validate", () => {
   const request = new QuoteRequest({
     ...contact,
     quoteType: "sparePart",
@@ -81,12 +81,10 @@ test("quotation snapshot, discount, and customer token hash fields validate", ()
       discountCents: 59000,
       finalTotalCents: 531000,
     },
-    customerAccessTokenHash: "a".repeat(64),
   });
 
   assert.equal(request.validateSync(), undefined);
   assert.equal(request.quotation.items[0].unitPricePaise, 250000);
   assert.equal(request.quotation.discountType, "percentage");
   assert.equal(request.quotation.finalTotalCents, 531000);
-  assert.equal(request.customerAccessTokenHash, "a".repeat(64));
 });

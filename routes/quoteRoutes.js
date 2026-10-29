@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
@@ -14,7 +14,8 @@ import {
   calculateQuotationTotals,
   calculateQuotationTotalsFromPaise,
   describeEmailFailure,
-  sendQuoteNotification,
+  sendFinalQuotation,
+  sendQuoteRequestConfirmation,
 } from "../services/quoteNotification.js";
 import { buildQuotationPdf } from "../services/quotePdf.js";
 
@@ -84,19 +85,6 @@ const readQuantity = (value, field) => {
   return quantity;
 };
 
-const hashCustomerAccessToken = (token) =>
-  createHash("sha256").update(token).digest("hex");
-
-const customerPdfUrl = (quoteId, token) => {
-  const frontendBase = (
-    process.env.PUBLIC_FRONTEND_URL ||
-    "https://unipackauto.vercel.app"
-  ).replace(/\/+$/, "");
-  const url = new URL(`/quotation/${quoteId}`, frontendBase);
-  url.hash = new URLSearchParams({ "customer-token": token }).toString();
-  return url.toString();
-};
-
 const applyQuotationTotals = (quote, totals, quotationNumber, issuedAt) => {
   quote.quotation.number = quotationNumber;
   quote.quotation.sentAt = issuedAt;
@@ -134,31 +122,21 @@ const getQuotationTotals = async (quote) => {
   return calculateQuotationTotals(pricedItems, discount);
 };
 
-const sendUpdatedQuotation = async (quote, totals, { accessToken, issuedAt }) => {
+const sendFinalizedQuotation = async (quote, totals, { issuedAt }) => {
   const quotationNumber = quote.quotation.number || createQuotationNumber(quote.id, issuedAt);
-  const previousTokenHash = quote.customerAccessTokenHash;
   applyQuotationTotals(quote, totals, quotationNumber, issuedAt);
-  quote.customerAccessTokenHash = hashCustomerAccessToken(accessToken);
   quote.notificationStatus = "pending";
   quote.notificationError = "";
+  quote.status = "quoted";
   await quote.save();
 
-  let customerReceivedEmail = false;
   try {
     const pdfBuffer = buildQuotationPdf(quote, totals);
-    const pdfUrl = customerPdfUrl(quote.id, accessToken);
-    await sendQuoteNotification(quote, [], {
-      totals,
+    await sendFinalQuotation(quote, totals, {
       quotationNumber,
       issuedAt,
-      discount: {
-        type: totals.discountType,
-        value: totals.discountValue,
-      },
       pdfBuffer,
-      customerPdfUrl: pdfUrl,
     });
-    customerReceivedEmail = true;
     quote.notificationStatus = "sent";
     quote.notificationError = "";
     await quote.save();
@@ -166,12 +144,6 @@ const sendUpdatedQuotation = async (quote, totals, { accessToken, issuedAt }) =>
   } catch (error) {
     quote.notificationStatus = "failed";
     quote.notificationError = describeEmailFailure(error);
-    customerReceivedEmail = customerReceivedEmail || Boolean(error.deliverySuccesses?.some(
-      (recipient) => recipient.toLowerCase() === quote.email.toLowerCase()
-    ));
-    if (previousTokenHash && !customerReceivedEmail) {
-      quote.customerAccessTokenHash = previousTokenHash;
-    }
     await quote.save();
     console.error(`Updated quotation email failed for ${quote.id}:`, {
       message: error.message,
@@ -279,7 +251,7 @@ const storeAttachment = async (req, file) => {
  * For each spare-part row in the validated quote, fetch the catalogue price
  * from MongoDB using the productId the frontend sent.
  *
- * Returns an array ready for sendQuoteNotification / calculateQuotationTotals:
+ * Returns an array ready for sendFinalQuotation / calculateQuotationTotals:
  *   { name, itemCode, quantity, unitPrice (rupees from the catalogue) }
  */
 const enrichPartsWithPrices = async (parts) => {
@@ -336,35 +308,25 @@ router.post("/", parseAttachment, async (req, res) => {
   try {
     if (req.file) quote.attachment = await storeAttachment(req, req.file);
     const savedQuote = await QuoteRequest.create(quote);
-
-    // ── Enrich spare-part rows with catalogue prices from MongoDB ──────────────
-    let pricedItems = null;
-    let pricingError = null;
-    if (savedQuote.parts?.length) {
-      try {
-        pricedItems = await enrichPartsWithPrices(savedQuote.parts);
-      } catch (err) {
-        pricingError = err;
-        console.warn("Price lookup failed for quote", savedQuote.id, err.message);
-      }
-    }
-
-    let delivery;
-    if (pricingError) {
+    let notificationSent = false;
+    try {
+      await sendQuoteRequestConfirmation(savedQuote);
+      savedQuote.notificationStatus = "sent";
+      savedQuote.notificationError = "";
+      notificationSent = true;
+    } catch (error) {
       savedQuote.notificationStatus = "failed";
-      savedQuote.notificationError = describeEmailFailure(pricingError);
-      console.error(`Quotation pricing failed for ${savedQuote.id}:`, pricingError.message);
-    } else {
-      const issuedAt = new Date();
-      const totals = calculateQuotationTotals(pricedItems);
-      const accessToken = randomBytes(32).toString("base64url");
-      delivery = await sendUpdatedQuotation(savedQuote, totals, { accessToken, issuedAt });
+      savedQuote.notificationError = describeEmailFailure(error);
+      console.error(`Quote request confirmation failed for ${savedQuote.id}:`, {
+        message: error.message,
+        guidance: savedQuote.notificationError,
+      });
     }
-    if (pricingError) await savedQuote.save();
+    await savedQuote.save();
     return res.status(201).json({
       message: "Quote request received.",
-      notificationSent: delivery?.notificationSent ?? false,
-      notificationError: delivery?.notificationError || savedQuote.notificationError,
+      notificationSent,
+      notificationError: savedQuote.notificationError,
       requestId: savedQuote.id,
     });
   } catch (error) {
@@ -376,43 +338,14 @@ router.post("/", parseAttachment, async (req, res) => {
 
 router.get("/", requireAdmin, async (_req, res) => {
   try {
-    const requests = await QuoteRequest.find().sort({ createdAt: -1 }).lean();
+    const requests = await QuoteRequest.find()
+      .select("-customerAccessTokenHash")
+      .sort({ createdAt: -1 })
+      .lean();
     return res.json(requests);
   } catch (error) {
     console.error("Error fetching quote requests:", error);
     return res.status(500).json({ message: "Could not fetch quote requests." });
-  }
-});
-
-router.get("/public/:id/pdf", async (req, res) => {
-  const token = String(req.get("authorization") || "").match(/^Bearer ([A-Za-z0-9_-]{43})$/i)?.[1] || "";
-  if (!mongoose.isValidObjectId(req.params.id) || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
-    return res.status(404).json({ message: "Quotation not found." });
-  }
-  try {
-    const quote = await QuoteRequest.findById(req.params.id).select("+customerAccessTokenHash");
-    const storedHash = quote?.customerAccessTokenHash;
-    const suppliedHash = hashCustomerAccessToken(token);
-    if (
-      !quote ||
-      !storedHash ||
-      !/^[a-f0-9]{64}$/i.test(storedHash) ||
-      !timingSafeEqual(Buffer.from(storedHash, "hex"), Buffer.from(suppliedHash, "hex"))
-    ) {
-      return res.status(404).json({ message: "Quotation not found." });
-    }
-    const totals = await getQuotationTotals(quote);
-    const pdf = buildQuotationPdf(quote, totals);
-    const filename = `${(quote.quotation.number || "quotation").replace(/[^a-z0-9-]/gi, "-")}.pdf`;
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Length", pdf.length);
-    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
-    res.setHeader("Cache-Control", "private, no-store");
-    res.setHeader("Referrer-Policy", "no-referrer");
-    return res.send(pdf);
-  } catch (error) {
-    console.error("Failed to generate customer quotation PDF:", error);
-    return res.status(500).json({ message: "Could not generate the quotation PDF." });
   }
 });
 
@@ -421,6 +354,9 @@ router.get("/:id/pdf", requireAdmin, async (req, res) => {
     const quote = await QuoteRequest.findById(req.params.id);
     if (!quote || quote.quoteType !== "sparePart") {
       return res.status(404).json({ message: "Spare-part quotation not found." });
+    }
+    if (!quote.quotation?.sentAt || !quote.quotation?.items?.length) {
+      return res.status(409).json({ message: "Finalize the quotation before downloading its PDF." });
     }
     const totals = await getQuotationTotals(quote);
     const pdf = buildQuotationPdf(quote, totals);
@@ -452,29 +388,28 @@ router.patch("/:id/discount", requireAdmin, async (req, res) => {
   }
 
   try {
-    const quote = await QuoteRequest.findById(req.params.id).select("+customerAccessTokenHash");
+    const quote = await QuoteRequest.findById(req.params.id);
     if (!quote || quote.quoteType !== "sparePart") {
       return res.status(404).json({ message: "Spare-part quote request not found." });
     }
+    const wasFinalized = Boolean(quote.quotation?.sentAt);
     quote.quotation.discountType = discountType;
     quote.quotation.discountValue = discountValue;
     const totals = await getQuotationTotals(quote);
-    const accessToken = randomBytes(32).toString("base64url");
-    const delivery = await sendUpdatedQuotation(quote, totals, {
-      accessToken,
+    const delivery = await sendFinalizedQuotation(quote, totals, {
       issuedAt: new Date(),
     });
     return res.json({
       message: delivery.notificationSent
-        ? "Discount saved and updated quotation emailed to the customer."
-        : "Discount saved, but the updated quotation email could not be delivered.",
+        ? wasFinalized
+          ? "Discount saved and revised quotation emailed to the customer."
+          : "Quotation finalized and emailed to the customer."
+        : wasFinalized
+          ? "Discount saved, but the revised quotation email could not be delivered."
+          : "Quotation finalized, but the customer email could not be delivered.",
       notificationSent: delivery.notificationSent,
       notificationError: delivery.notificationError || "",
-      request: (() => {
-        const request = delivery.request.toObject();
-        delete request.customerAccessTokenHash;
-        return request;
-      })(),
+      request: delivery.request,
     });
   } catch (error) {
     if (error.name === "CastError") return res.status(404).json({ message: "Quote request not found." });
