@@ -149,16 +149,14 @@ const columns = [
   { key: "name", label: "ITEM DESCRIPTION", x: 60, width: 200, align: "left" },
   { key: "code", label: "ITEM CODE", x: 260, width: 58, align: "left" },
   { key: "quantity", label: "QUANTITY", x: 318, width: 38, align: "right" },
-  { key: "totalQuantity", label: "TOTAL QUANTITY", x: 356, width: 56, align: "right" },
-  { key: "unitPrice", label: "RATE (Rs)", x: 412, width: 68, align: "right" },
-  { key: "amount", label: "NET TOTAL (Rs)", x: 480, width: 80, align: "right" },
+  { key: "unitPrice", label: "RATE (Rs)", x: 356, width: 68, align: "right" },
+  { key: "amount", label: "NET TOTAL (Rs)", x: 424, width: 136, align: "right" },
 ];
 const cellCharacterWidths = {
   number: 4,
   name: 49,
   code: 12,
   quantity: 6,
-  totalQuantity: 10,
   unitPrice: 12,
   amount: 13,
 };
@@ -187,7 +185,6 @@ const drawRow = (commands, item, index, y, rowHeight) => {
     name: item.name,
     code: item.itemCode || "—",
     quantity: String(item.quantity),
-    totalQuantity: String(item.quantity),
     unitPrice: money(item.unitPricePaise),
     amount: money(item.totalPaise),
   };
@@ -220,7 +217,8 @@ const drawSummary = (commands, totals, y) => {
     ["NET TOTAL", money(totals.subtotalPaise)],
     ["GST @ 18%", money(totals.gstPaise)],
     ["GROSS TOTAL", money(totals.grandTotalPaise)],
-    [`DISCOUNT (${formatDiscountPercentage(totals)})`, `-${money(totals.discountPaise)}`],
+    ["DISCOUNT PERCENTAGE (%)", formatDiscountPercentage(totals)],
+    ["DISCOUNT AMOUNT (Rs)", `-${money(totals.discountPaise)}`],
   ];
   let cursorY = y;
   for (const [label, amount] of rows) {
@@ -293,12 +291,12 @@ const createPages = (quote, totals) => {
 
   totals.items.forEach((item, index) => {
     const rowHeight = itemRowHeight(item);
-    if (page.y - rowHeight - 85 < BODY_BOTTOM) startPage();
+    if (page.y - rowHeight - 100 < BODY_BOTTOM) startPage();
     drawRow(page.commands, item, index, page.y, rowHeight);
     page.y -= rowHeight;
   });
 
-  if (page.y - 85 < BODY_BOTTOM) startPage();
+  if (page.y - 100 < BODY_BOTTOM) startPage();
   drawSummary(page.commands, totals, page.y - 4);
   pages.forEach(({ commands }, index) => drawFooter(commands, index + 1, pages.length));
   return pages;
