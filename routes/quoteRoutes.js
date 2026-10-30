@@ -15,7 +15,7 @@ import {
   calculateQuotationTotalsFromPaise,
   describeEmailFailure,
   sendFinalQuotation,
-  sendQuoteRequestConfirmation,
+  sendQuoteRequestNotification,
 } from "../services/quoteNotification.js";
 import { buildQuotationPdf } from "../services/quotePdf.js";
 
@@ -131,11 +131,9 @@ const sendFinalizedQuotation = async (quote, totals, { issuedAt }) => {
   await quote.save();
 
   try {
-    const pdfBuffer = buildQuotationPdf(quote, totals);
     await sendFinalQuotation(quote, totals, {
       quotationNumber,
       issuedAt,
-      pdfBuffer,
     });
     quote.notificationStatus = "sent";
     quote.notificationError = "";
@@ -310,14 +308,14 @@ router.post("/", parseAttachment, async (req, res) => {
     const savedQuote = await QuoteRequest.create(quote);
     let notificationSent = false;
     try {
-      await sendQuoteRequestConfirmation(savedQuote);
+      await sendQuoteRequestNotification(savedQuote);
       savedQuote.notificationStatus = "sent";
       savedQuote.notificationError = "";
       notificationSent = true;
     } catch (error) {
       savedQuote.notificationStatus = "failed";
       savedQuote.notificationError = describeEmailFailure(error);
-      console.error(`Quote request confirmation failed for ${savedQuote.id}:`, {
+      console.error(`Quote request notification failed for ${savedQuote.id}:`, {
         message: error.message,
         guidance: savedQuote.notificationError,
       });
@@ -393,6 +391,16 @@ router.patch("/:id/discount", requireAdmin, async (req, res) => {
       return res.status(404).json({ message: "Spare-part quote request not found." });
     }
     const wasFinalized = Boolean(quote.quotation?.sentAt);
+    const discountIsUnchanged = quote.quotation?.discountType === discountType &&
+      Number(quote.quotation?.discountValue || 0) === discountValue;
+    if (wasFinalized && quote.notificationStatus === "sent" && discountIsUnchanged) {
+      return res.json({
+        message: "This quotation has already been emailed with the current discount.",
+        notificationSent: true,
+        alreadySent: true,
+        request: quote,
+      });
+    }
     quote.quotation.discountType = discountType;
     quote.quotation.discountValue = discountValue;
     const totals = await getQuotationTotals(quote);
@@ -402,11 +410,11 @@ router.patch("/:id/discount", requireAdmin, async (req, res) => {
     return res.json({
       message: delivery.notificationSent
         ? wasFinalized
-          ? "Discount saved and revised quotation emailed to the customer."
-          : "Quotation finalized and emailed to the customer."
+          ? "Discount saved and revised quotation emailed to the owner and customer."
+          : "Quotation finalized and emailed to the owner and customer."
         : wasFinalized
-          ? "Discount saved, but the revised quotation email could not be delivered."
-          : "Quotation finalized, but the customer email could not be delivered.",
+          ? "Discount saved, but the revised quotation email could not be delivered to both recipients."
+          : "Quotation finalized, but the email could not be delivered to both recipients.",
       notificationSent: delivery.notificationSent,
       notificationError: delivery.notificationError || "",
       request: delivery.request,

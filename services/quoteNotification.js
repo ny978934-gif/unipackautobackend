@@ -583,7 +583,46 @@ export const buildQuoteRequestConfirmationEmail = (quote) => ({
   html: `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:600px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">Request received</td></tr><tr><td style="padding:28px;line-height:1.6;"><p>Hello ${esc(quote.contactName)},</p><p>We have received the spare parts quotation request for <strong>${esc(quote.company)}</strong>.</p><p>Our team will review your request and contact you with a quotation.</p><p style="color:#777;font-size:13px;">Request ID: ${esc(quote.id || quote._id)}</p><p>Thank you,<br><strong>Unipackauto India Pvt. Ltd.</strong></p></td></tr></table></body></html>`,
 });
 
-export async function sendQuoteRequestConfirmation(quote) {
+export const buildQuoteRequestOwnerEmail = (quote) => {
+  const requestId = quote.id || quote._id;
+  const parts = (quote.parts || []).map((part, index) =>
+    `${index + 1}. ${part.partName} | ${part.machine} | Item code: ${part.itemCode || "—"} | Quantity: ${part.quantity}`
+  );
+  const attachmentText = quote.attachment?.url
+    ? `\nAttachment: ${quote.attachment.name || quote.attachment.url}\n${quote.attachment.url}`
+    : "";
+  const text = [
+    "New spare parts quotation request",
+    `Request ID: ${requestId}`,
+    "",
+    `Company: ${quote.company}`,
+    `Contact: ${quote.contactName}`,
+    `Email: ${quote.email}`,
+    `Phone: ${quote.phone}`,
+    `Location: ${quote.city}, ${quote.state}`,
+    "",
+    "Requested spare parts:",
+    ...parts,
+    ...(quote.message ? ["", `Customer message: ${quote.message}`] : []),
+    ...(attachmentText ? [attachmentText] : []),
+  ].join("\n");
+  const partRows = (quote.parts || []).map((part, index) => `
+    <tr>
+      <td style="${COL_STYLE}">${index + 1}</td>
+      <td style="${COL_STYLE}">${esc(part.partName)}</td>
+      <td style="${COL_STYLE}">${esc(part.machine)}</td>
+      <td style="${COL_STYLE}">${esc(part.itemCode || "—")}</td>
+      <td align="right" style="${COL_STYLE}">${esc(part.quantity)}</td>
+    </tr>`).join("");
+  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:760px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">New spare parts quotation request</td></tr><tr><td style="padding:28px;line-height:1.6;"><p><strong>Request ID:</strong> ${esc(requestId)}</p><p><strong>Company:</strong> ${esc(quote.company)}<br><strong>Contact:</strong> ${esc(quote.contactName)}<br><strong>Email:</strong> ${esc(quote.email)}<br><strong>Phone:</strong> ${esc(quote.phone)}<br><strong>Location:</strong> ${esc(quote.city)}, ${esc(quote.state)}</p><h2 style="font-size:17px;">Requested spare parts</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><thead><tr><th style="${HEAD_STYLE}">#</th><th style="${HEAD_STYLE}">Spare part</th><th style="${HEAD_STYLE}">Machine / application</th><th style="${HEAD_STYLE}">Item code</th><th style="${HEAD_STYLE}">Quantity</th></tr></thead><tbody>${partRows}</tbody></table>${quote.message ? `<p><strong>Customer message:</strong><br>${esc(quote.message)}</p>` : ""}${quote.attachment?.url ? `<p><strong>Customer attachment:</strong> <a href="${esc(quote.attachment.url)}">${esc(quote.attachment.name || "View attachment")}</a></p>` : ""}</td></tr></table></body></html>`;
+  return {
+    subject: `New spare parts quotation request - ${requestId}`,
+    text,
+    html,
+  };
+};
+
+export async function sendQuoteRequestNotification(quote) {
   if (quote.quoteType !== "sparePart") {
     throw new Error("Only spare-part quote notifications are supported.");
   }
@@ -594,18 +633,37 @@ export async function sendQuoteRequestConfirmation(quote) {
     });
   }
   const { config, transporter } = makeTransporter();
-  const email = buildQuoteRequestConfirmationEmail(quote);
-
-  return deliverEmailToRecipients(transporter, {
+  const ownerEmail = buildQuoteRequestOwnerEmail(quote);
+  const customerEmailMessage = buildQuoteRequestConfirmationEmail(quote);
+  const commonHeaders = {
     from: `"UnipackAuto Enquiries" <${config.from}>`,
     replyTo: quote.email,
-    subject: email.subject,
-    text: email.text,
-    html: email.html,
-  }, [config.to, customerEmail]);
+  };
+
+  if (config.to.toLowerCase() === customerEmail.toLowerCase()) {
+    return deliverEmailToRecipients(transporter, {
+      ...commonHeaders,
+      ...ownerEmail,
+    }, [config.to]);
+  }
+
+  const [ownerDelivery, customerDelivery] = await Promise.all([
+    deliverEmailToRecipients(transporter, {
+      ...commonHeaders,
+      ...ownerEmail,
+    }, [config.to]),
+    deliverEmailToRecipients(transporter, {
+      ...commonHeaders,
+      ...customerEmailMessage,
+    }, [customerEmail]),
+  ]);
+  return {
+    deliveries: [...ownerDelivery.deliveries, ...customerDelivery.deliveries],
+    accepted: [...ownerDelivery.accepted, ...customerDelivery.accepted],
+  };
 }
 
-export async function sendFinalQuotation(quote, totals, { quotationNumber, issuedAt, pdfBuffer }) {
+export async function sendFinalQuotation(quote, totals, { quotationNumber, issuedAt }) {
   if (quote.quoteType !== "sparePart") {
     throw new Error("Only spare-part quotations are supported.");
   }
@@ -615,9 +673,6 @@ export async function sendFinalQuotation(quote, totals, { quotationNumber, issue
       status: 400,
     });
   }
-  if (!Buffer.isBuffer(pdfBuffer) || !pdfBuffer.length) {
-    throw new Error("A generated quotation PDF is required before sending the final quotation.");
-  }
   const { config, transporter } = makeTransporter();
   const email = buildSparePartsQuotationEmail(quote, totals, quotationNumber, issuedAt);
   const delivery = await deliverEmailToRecipients(transporter, {
@@ -626,12 +681,7 @@ export async function sendFinalQuotation(quote, totals, { quotationNumber, issue
     subject: email.subject,
     text: email.text,
     html: email.html,
-    attachments: [{
-      filename: `${quotationNumber.replace(/[^a-z0-9-]/gi, "-")}.pdf`,
-      content: pdfBuffer,
-      contentType: "application/pdf",
-    }],
-  }, [customerEmail]);
+  }, [config.to, customerEmail]);
   return {
     ...delivery,
     totals,

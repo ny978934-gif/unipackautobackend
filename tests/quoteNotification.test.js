@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildSparePartsQuotationEmail,
+  buildQuoteRequestOwnerEmail,
   buildQuoteRequestConfirmationEmail,
   calculateQuotationTotals,
   createQuotationNumber,
@@ -9,7 +10,7 @@ import {
   describeEmailFailure,
   formatINR,
   getEmailConfiguration,
-  sendQuoteRequestConfirmation,
+  sendQuoteRequestNotification,
 } from "../services/quoteNotification.js";
 import { buildQuotationPdf } from "../services/quotePdf.js";
 
@@ -141,7 +142,7 @@ test("attempts delivery to both recipients and reports partial delivery failures
   assert.deepEqual(attemptedRecipients, ["sales@unipackauto.in", "customer@example.com"]);
 });
 
-test("builds a simple submission confirmation without quotation totals or PDF links", () => {
+test("builds a simple customer submission confirmation without request details or PDF links", () => {
   const email = buildQuoteRequestConfirmationEmail({
     id: "request-123",
     company: "Example Packaging",
@@ -156,16 +157,60 @@ test("builds a simple submission confirmation without quotation totals or PDF li
   assert.equal("attachments" in email, false);
 });
 
+test("builds a complete owner notification with customer and requested spare-part details", () => {
+  const email = buildQuoteRequestOwnerEmail({
+    id: "request-123",
+    company: "Example Packaging",
+    contactName: "A. Customer",
+    email: "customer@example.com",
+    phone: "+91 98765 43210",
+    city: "Bhiwadi",
+    state: "Rajasthan",
+    message: "Please confirm availability.",
+    parts: [{
+      partName: "Feed roller",
+      machine: "Wrapping Machine / UPA-100",
+      itemCode: "FR-01",
+      quantity: 3,
+    }],
+    attachment: {
+      name: "machine-label.jpg",
+      url: "https://files.example.com/machine-label.jpg",
+    },
+  });
+
+  assert.match(email.subject, /New spare parts quotation request/);
+  for (const value of [
+    "request-123",
+    "Example Packaging",
+    "A. Customer",
+    "customer@example.com",
+    "+91 98765 43210",
+    "Bhiwadi, Rajasthan",
+    "Feed roller",
+    "Wrapping Machine / UPA-100",
+    "FR-01",
+    "Quantity: 3",
+    "Please confirm availability.",
+    "machine-label.jpg",
+    "https://files.example.com/machine-label.jpg",
+  ]) {
+    assert.ok(email.text.includes(value), `expected owner email to contain: ${value}`);
+  }
+  assert.doesNotMatch(email.text, /Grand Total|Discount|application\/pdf/i);
+  assert.equal("attachments" in email, false);
+});
+
 test("rejects an invalid customer email before attempting SMTP delivery", async () => {
   await assert.rejects(
-    sendQuoteRequestConfirmation({ quoteType: "sparePart", email: "not-an-email" }),
+    sendQuoteRequestNotification({ quoteType: "sparePart", email: "not-an-email" }),
     { status: 400, message: "A valid customer email address is required for the quotation." }
   );
 });
 
 test("does not send new machine quote notifications", async () => {
   await assert.rejects(
-    sendQuoteRequestConfirmation({ quoteType: "machine" }),
+    sendQuoteRequestNotification({ quoteType: "machine" }),
     /Only spare-part quote notifications are supported/
   );
 });
@@ -247,6 +292,7 @@ test("final quotation email includes the discount and amount due without custome
   assert.match(email.html, /Final Amount Due/);
   assert.doesNotMatch(email.text, /View or download|quotation PDF/i);
   assert.doesNotMatch(email.html, /View or download|quotation PDF/i);
+  assert.equal("attachments" in email, false);
 });
 
 test("rejects discounts above the tax-inclusive total and percentages above 100", () => {
@@ -402,6 +448,7 @@ test("builds the branded spare-parts quotation email with request details and su
   }
   assert.doesNotMatch(email.html, /View or download quotation PDF/);
   assert.doesNotMatch(email.text, /View or download your quotation PDF/);
+  assert.equal("attachments" in email, false);
   assert.ok(
     email.html.indexOf("Customer Details") < email.html.indexOf("Dear Sir/Madam,"),
     "customer details should appear before the greeting"
