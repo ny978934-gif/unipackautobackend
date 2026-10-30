@@ -8,6 +8,7 @@ import {
   createQuotationNumber,
   deliverEmailToRecipients,
   describeEmailFailure,
+  formatDiscountPercentage,
   formatINR,
   getEmailConfiguration,
   sendQuoteRequestNotification,
@@ -200,9 +201,9 @@ test("builds a complete owner notification with customer and requested spare-par
     "Wrapping Machine / UPA-100",
     "FR-01",
     "Quantity: 3 | Unit price: ₹200.00 | Line total: ₹600.00",
-    "Subtotal: ₹600.00",
+    "Net Total: ₹600.00",
     "GST @ 18%: ₹108.00",
-    "Estimated total including GST: ₹708.00",
+    "Estimated gross total including GST: ₹708.00",
     "final quotation and any discount will be confirmed",
     "Commercial guidelines:",
     "Freight Charges: Extra, as applicable.",
@@ -269,7 +270,7 @@ test("calculates item totals, subtotal, 18% GST, and grand total in integer pais
   assert.equal(formatINR(totals.grandTotalPaise), "₹11,800.00");
 });
 
-test("applies percentage and fixed discounts after GST", () => {
+test("applies percentage and fixed discounts to the gross total after GST", () => {
   const items = [{ name: "Part", quantity: 1, unitPrice: 200 }];
   const percentage = calculateQuotationTotals(items, { type: "percentage", value: 10 });
   assert.equal(percentage.subtotalPaise, 20000);
@@ -277,10 +278,12 @@ test("applies percentage and fixed discounts after GST", () => {
   assert.equal(percentage.grandTotalPaise, 23600);
   assert.equal(percentage.discountPaise, 2360);
   assert.equal(percentage.finalTotalPaise, 21240);
+  assert.equal(formatDiscountPercentage(percentage), "10.00%");
 
   const fixed = calculateQuotationTotals(items, { type: "fixed", value: 20 });
   assert.equal(fixed.discountPaise, 2000);
   assert.equal(fixed.finalTotalPaise, 21600);
+  assert.equal(formatDiscountPercentage(fixed), "8.47%");
 });
 
 test("final quotation email includes the discount and amount due without customer PDF links", () => {
@@ -305,13 +308,28 @@ test("final quotation email includes the discount and amount due without custome
     new Date("2026-10-29T00:00:00.000Z")
   );
 
-  assert.match(email.text, /Discount \(10%\): -₹23\.60/);
-  assert.match(email.text, /Final Amount Due: ₹212\.40/);
-  assert.match(email.html, /Discount \(10%\)/);
-  assert.match(email.html, /Final Amount Due/);
+  assert.match(email.text, /Net Total: ₹200\.00/);
+  assert.match(email.text, /GST @ 18%: ₹36\.00/);
+  assert.match(email.text, /Gross Total: ₹236\.00/);
+  assert.match(email.text, /Discount \(10\.00%\): -₹23\.60/);
+  assert.match(email.text, /Final Payable Amount: ₹212\.40/);
+  assert.match(email.html, /Discount \(10\.00%\)/);
+  assert.match(email.html, /Final Payable Amount/);
   assert.doesNotMatch(email.text, /View or download|quotation PDF/i);
   assert.doesNotMatch(email.html, /View or download|quotation PDF/i);
   assert.equal("attachments" in email, false);
+
+  const fixedDiscountEmail = buildSparePartsQuotationEmail(
+    quote,
+    calculateQuotationTotals(
+      [{ name: "Feed roller", itemCode: "FR-01", quantity: 1, unitPrice: 200 }],
+      { type: "fixed", value: 20 }
+    ),
+    "UPK/Spare/Quote/Oct-26/request-123",
+    new Date("2026-10-29T00:00:00.000Z")
+  );
+  assert.match(fixedDiscountEmail.text, /Discount \(8\.47%\): -₹20\.00/);
+  assert.match(fixedDiscountEmail.text, /Final Payable Amount: ₹216\.00/);
 });
 
 test("rejects discounts above the tax-inclusive total and percentages above 100", () => {
@@ -352,17 +370,21 @@ test("generates a valid multi-page PDF with the complete discount breakdown", ()
   assert.ok(pdf.subarray(0, 8).toString("ascii").startsWith("%PDF-1.4"));
   assert.ok(pageCount > 1);
   assert.equal(pdf.subarray(startXref, startXref + 4).toString("ascii"), "xref");
-  assert.match(content, /Subtotal/);
+  assert.match(content, /NET TOTAL/);
   assert.match(content, /Rs 9,000\.00/);
   assert.match(content, /GST @ 18%/);
   assert.match(content, /Rs 1,620\.00/);
-  assert.match(content, /Discount \\\(10%\\\)/);
+  assert.match(content, /GROSS TOTAL/);
+  assert.match(content, /Rs 10,620\.00/);
+  assert.match(content, /DISCOUNT \\\(10\.00%\\\)/);
   assert.match(content, /Rs 1,062\.00/);
-  assert.match(content, /FINAL AMOUNT DUE/);
+  assert.match(content, /FINAL PAYABLE AMOUNT/);
   assert.match(content, /Rs 9,558\.00/);
+  assert.equal(content.split("(TOTAL QUANTITY)").length - 1, pageCount);
+  assert.equal(content.split("(DISCOUNT)").length - 1, 0);
   assert.match(content, /P-1/);
   assert.match(content, /Part 90/);
-  assert.match(content, /Rs 11\.80/);
+  assert.match(content, /Rs 100\.00/);
   assert.match(content, /\/Subtype \/Image .*\/Filter \/DCTDecode/);
   assert.equal(content.split("(DELIVERY CHALLAN)").length - 1, pageCount);
   assert.equal(content.split("(TERMS & CONDITIONS)").length - 1, pageCount);
@@ -458,11 +480,12 @@ test("builds the branded spare-parts quotation email with request details and su
     "Company Name",
     "Spare Part Description",
     "Machine / Application",
-    "Subtotal",
+    "Net Total",
     "GST @ 18%",
-    "Grand Total (Including GST)",
+    "Gross Total",
     "Discount",
-    "Final Amount Due",
+    "Final Payable Amount",
+    "Discount (0.00%)",
     "₹5,500.00",
     "₹990.00",
     "₹6,490.00",

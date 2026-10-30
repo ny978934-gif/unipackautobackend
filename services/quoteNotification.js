@@ -15,6 +15,20 @@ export const formatINR = (amountInPaise) => {
   return `\u20B9${INR.format(rupees)}.${paiseStr}`;
 };
 
+export const getDiscountPercentage = (totals) => {
+  if (totals.discountType === "percentage") {
+    return Math.round(Number(totals.discountValue) * 100) / 100;
+  }
+  if (!totals.grandTotalPaise) return 0;
+  return Number(
+    (BigInt(totals.discountPaise) * 10000n + BigInt(totals.grandTotalPaise) / 2n) /
+      BigInt(totals.grandTotalPaise)
+  ) / 100;
+};
+
+export const formatDiscountPercentage = (totals) =>
+  `${getDiscountPercentage(totals).toFixed(2)}%`;
+
 /** Convert a JS float price (rupees) to integer paise without float drift */
 const toPaise = (value) => {
   const [mantissa = "", expText = "0"] = String(value).toLowerCase().split("e");
@@ -187,19 +201,12 @@ const buildItemisedTable = (totals) => {
     </thead>
     <tbody>
       ${rows}
-      ${summaryRow("Subtotal", formatINR(totals.subtotalPaise))}
+      ${summaryRow("Net Total", formatINR(totals.subtotalPaise))}
       ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
-      ${summaryRow("Grand Total (Including GST)", formatINR(totals.grandTotalPaise))}
-      ${summaryRow(
-        totals.discountType === "percentage"
-          ? `Discount (${totals.discountValue}%)`
-          : totals.discountType === "fixed"
-            ? `Discount (${formatINR(totals.discountValuePaise)})`
-            : "Discount",
-        `-${formatINR(totals.discountPaise)}`
-      )}
+      ${summaryRow("Gross Total", formatINR(totals.grandTotalPaise))}
+      ${summaryRow(`Discount (${formatDiscountPercentage(totals)})`, `-${formatINR(totals.discountPaise)}`)}
       <tr>
-        <td colspan="6" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Final Amount Due</td>
+        <td colspan="6" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Final Payable Amount</td>
         <td align="right" bgcolor="#faf5fb" style="padding:14px 10px;white-space:nowrap;font-weight:bold;font-size:17px;border-top:2px solid #66116f;color:#66116f;">${formatINR(totals.finalTotalPaise)}</td>
       </tr>
     </tbody>
@@ -265,11 +272,11 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
     ...totals.items.map((item, index) =>
       `${index + 1} | ${item.name} | ${item.machine || "—"} | ${item.itemCode || "—"} | ${item.quantity} | ${formatINR(item.unitPricePaise)} | ${formatINR(item.totalPaise)}`
     ),
-    `Subtotal: ${formatINR(totals.subtotalPaise)}`,
+    `Net Total: ${formatINR(totals.subtotalPaise)}`,
     `GST @ 18%: ${formatINR(totals.gstPaise)}`,
-    `Grand Total (Including GST): ${formatINR(totals.grandTotalPaise)}`,
-    `Discount${totals.discountType === "percentage" ? ` (${totals.discountValue}%)` : totals.discountType === "fixed" ? ` (${formatINR(totals.discountValuePaise)})` : ""}: -${formatINR(totals.discountPaise)}`,
-    `Final Amount Due: ${formatINR(totals.finalTotalPaise)}`,
+    `Gross Total: ${formatINR(totals.grandTotalPaise)}`,
+    `Discount (${formatDiscountPercentage(totals)}): -${formatINR(totals.discountPaise)}`,
+    `Final Payable Amount: ${formatINR(totals.finalTotalPaise)}`,
     "Discount is applied after GST.",
     "",
     "Commercial Terms & Conditions:",
@@ -605,9 +612,9 @@ export const buildQuoteRequestOwnerEmail = (quote, totals) => {
     "Requested spare parts:",
     ...parts,
     "",
-    `Subtotal: ${formatINR(totals.subtotalPaise)}`,
+    `Net Total: ${formatINR(totals.subtotalPaise)}`,
     `GST @ 18%: ${formatINR(totals.gstPaise)}`,
-    `Estimated total including GST: ${formatINR(totals.grandTotalPaise)}`,
+    `Estimated gross total including GST: ${formatINR(totals.grandTotalPaise)}`,
     "Estimate only; the final quotation and any discount will be confirmed by an admin.",
     "",
     "Commercial guidelines:",
@@ -629,7 +636,7 @@ export const buildQuoteRequestOwnerEmail = (quote, totals) => {
     const separator = term.indexOf(":");
     return `<li><strong>${esc(term.slice(0, separator + 1))}</strong>${esc(term.slice(separator + 1))}</li>`;
   }).join("");
-  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:900px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">New spare parts quotation request</td></tr><tr><td style="padding:28px;line-height:1.6;"><p><strong>Request ID:</strong> ${esc(requestId)}</p><p><strong>Company:</strong> ${esc(quote.company)}<br><strong>Contact:</strong> ${esc(quote.contactName)}<br><strong>Email:</strong> ${esc(quote.email)}<br><strong>Phone:</strong> ${esc(quote.phone)}<br><strong>Location:</strong> ${esc(quote.city)}, ${esc(quote.state)}</p><h2 style="font-size:17px;">Requested spare parts and catalogue pricing</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><thead><tr><th style="${HEAD_STYLE}">#</th><th style="${HEAD_STYLE}">Spare part</th><th style="${HEAD_STYLE}">Machine / application</th><th style="${HEAD_STYLE}">Item code</th><th style="${HEAD_STYLE}">Quantity</th><th style="${HEAD_STYLE}">Unit price</th><th style="${HEAD_STYLE}">Line total</th></tr></thead><tbody>${partRows}</tbody><tfoot><tr><td colspan="6" align="right" style="${COL_STYLE}">Subtotal</td><td align="right" style="${COL_STYLE}">${formatINR(totals.subtotalPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}">GST @ 18%</td><td align="right" style="${COL_STYLE}">${formatINR(totals.gstPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}font-weight:bold;">Estimated total including GST</td><td align="right" style="${COL_STYLE}font-weight:bold;">${formatINR(totals.grandTotalPaise)}</td></tr></tfoot></table><p style="font-size:12px;color:#687185;">Estimate only; the final quotation and any discount will be confirmed by an admin.</p><h2 style="font-size:17px;">Commercial guidelines</h2><ol>${termsHtml}</ol>${quote.message ? `<p><strong>Customer message:</strong><br>${esc(quote.message)}</p>` : ""}${quote.attachment?.url ? `<p><strong>Customer attachment:</strong> <a href="${esc(quote.attachment.url)}">${esc(quote.attachment.name || "View attachment")}</a></p>` : ""}</td></tr></table></body></html>`;
+  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:900px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">New spare parts quotation request</td></tr><tr><td style="padding:28px;line-height:1.6;"><p><strong>Request ID:</strong> ${esc(requestId)}</p><p><strong>Company:</strong> ${esc(quote.company)}<br><strong>Contact:</strong> ${esc(quote.contactName)}<br><strong>Email:</strong> ${esc(quote.email)}<br><strong>Phone:</strong> ${esc(quote.phone)}<br><strong>Location:</strong> ${esc(quote.city)}, ${esc(quote.state)}</p><h2 style="font-size:17px;">Requested spare parts and catalogue pricing</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><thead><tr><th style="${HEAD_STYLE}">#</th><th style="${HEAD_STYLE}">Spare part</th><th style="${HEAD_STYLE}">Machine / application</th><th style="${HEAD_STYLE}">Item code</th><th style="${HEAD_STYLE}">Quantity</th><th style="${HEAD_STYLE}">Unit price</th><th style="${HEAD_STYLE}">Line total</th></tr></thead><tbody>${partRows}</tbody><tfoot><tr><td colspan="6" align="right" style="${COL_STYLE}">Net Total</td><td align="right" style="${COL_STYLE}">${formatINR(totals.subtotalPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}">GST @ 18%</td><td align="right" style="${COL_STYLE}">${formatINR(totals.gstPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}font-weight:bold;">Estimated Gross Total</td><td align="right" style="${COL_STYLE}font-weight:bold;">${formatINR(totals.grandTotalPaise)}</td></tr></tfoot></table><p style="font-size:12px;color:#687185;">Estimate only; the final quotation and any discount will be confirmed by an admin.</p><h2 style="font-size:17px;">Commercial guidelines</h2><ol>${termsHtml}</ol>${quote.message ? `<p><strong>Customer message:</strong><br>${esc(quote.message)}</p>` : ""}${quote.attachment?.url ? `<p><strong>Customer attachment:</strong> <a href="${esc(quote.attachment.url)}">${esc(quote.attachment.name || "View attachment")}</a></p>` : ""}</td></tr></table></body></html>`;
   return {
     subject: `New spare parts quotation request - ${requestId}`,
     text,

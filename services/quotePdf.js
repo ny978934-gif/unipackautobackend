@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatINR } from "./quoteNotification.js";
+import { formatDiscountPercentage, formatINR } from "./quoteNotification.js";
 
 const serverDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultLogoPath = path.resolve(serverDirectory, "..", "client", "src", "assests", "logo.jpeg");
@@ -146,21 +146,21 @@ const drawHeader = (commands, quote) => {
 
 const columns = [
   { key: "number", label: "No.", x: 35, width: 25, align: "center" },
-  { key: "name", label: "ITEM DESCRIPTION", x: 60, width: 210, align: "left" },
-  { key: "code", label: "ITEM CODE", x: 270, width: 61, align: "left" },
-  { key: "quantity", label: "QTY", x: 331, width: 38, align: "right" },
-  { key: "unitPrice", label: "RATE (Rs)", x: 369, width: 62, align: "right" },
-  { key: "discount", label: "DISCOUNT", x: 431, width: 56, align: "right" },
-  { key: "amount", label: "NET (INCL. GST)", x: 487, width: 73, align: "right" },
+  { key: "name", label: "ITEM DESCRIPTION", x: 60, width: 200, align: "left" },
+  { key: "code", label: "ITEM CODE", x: 260, width: 58, align: "left" },
+  { key: "quantity", label: "QUANTITY", x: 318, width: 38, align: "right" },
+  { key: "totalQuantity", label: "TOTAL QUANTITY", x: 356, width: 56, align: "right" },
+  { key: "unitPrice", label: "RATE (Rs)", x: 412, width: 68, align: "right" },
+  { key: "amount", label: "NET TOTAL (Rs)", x: 480, width: 80, align: "right" },
 ];
 const cellCharacterWidths = {
   number: 4,
-  name: 52,
-  code: 13,
+  name: 49,
+  code: 12,
   quantity: 6,
+  totalQuantity: 10,
   unitPrice: 12,
-  discount: 11,
-  amount: 12,
+  amount: 13,
 };
 
 const drawTableHeader = (commands) => {
@@ -187,12 +187,10 @@ const drawRow = (commands, item, index, y, rowHeight) => {
     name: item.name,
     code: item.itemCode || "—",
     quantity: String(item.quantity),
+    totalQuantity: String(item.quantity),
     unitPrice: money(item.unitPricePaise),
-    discount: "—",
-    amount: money(item.netTotalPaise),
+    amount: money(item.totalPaise),
   };
-  const discountRow = item.discountPaise || 0;
-  values.discount = discountRow ? money(discountRow) : "—";
   commands.push(commandRect(PAGE_MARGIN, y - rowHeight, PAGE_WIDTH - PAGE_MARGIN * 2, rowHeight, {
     fill: index % 2 ? COLORS.pale : COLORS.white,
     stroke: COLORS.line,
@@ -219,17 +217,10 @@ const drawRow = (commands, item, index, y, rowHeight) => {
 
 const drawSummary = (commands, totals, y) => {
   const rows = [
-    ["Subtotal", money(totals.subtotalPaise)],
+    ["NET TOTAL", money(totals.subtotalPaise)],
     ["GST @ 18%", money(totals.gstPaise)],
-    ["Total including GST", money(totals.grandTotalPaise)],
-    [
-      totals.discountType === "percentage"
-        ? `Discount (${totals.discountValue}%)`
-        : totals.discountType === "fixed"
-          ? `Discount (${money(totals.discountValuePaise)})`
-          : "Discount",
-      `-${money(totals.discountPaise)}`,
-    ],
+    ["GROSS TOTAL", money(totals.grandTotalPaise)],
+    [`DISCOUNT (${formatDiscountPercentage(totals)})`, `-${money(totals.discountPaise)}`],
   ];
   let cursorY = y;
   for (const [label, amount] of rows) {
@@ -243,7 +234,7 @@ const drawSummary = (commands, totals, y) => {
     stroke: COLORS.yellow,
     lineWidth: 0.8,
   }));
-  commands.push(commandText("FINAL AMOUNT DUE", 362, cursorY + 3, { font: "F2", size: 8 }));
+  commands.push(commandText("FINAL PAYABLE AMOUNT", 362, cursorY + 3, { font: "F2", size: 8 }));
   commands.push(rightText(money(totals.finalTotalPaise), 552, cursorY + 3, { font: "F2", size: 9 }));
   commands.push(commandText("Discount is applied after GST.", 355, cursorY - 15, { size: 6.5, color: COLORS.muted }));
   return cursorY - 22;
@@ -278,56 +269,15 @@ const itemRowHeight = (item) => {
     name: item.machine ? `${item.name} (${item.machine})` : item.name,
     code: item.itemCode || "—",
     quantity: item.quantity,
+    totalQuantity: item.quantity,
     unitPrice: money(item.unitPricePaise),
-    discount: money(item.discountPaise || 0),
-    amount: money(item.netTotalPaise),
+    amount: money(item.totalPaise),
   };
   const maximumLines = Math.max(
     1,
     ...Object.entries(cells).map(([key, value]) => wrapText(value, cellCharacterWidths[key]).length)
   );
   return Math.max(25, maximumLines * 9 + 12);
-};
-
-const allocateAmount = (items, targetAmount, denominator, getWeight) => {
-  if (!denominator || !targetAmount) return items.map(() => 0);
-  const rows = items.map((item, index) => {
-    const weight = getWeight(item, index);
-    const numerator = BigInt(weight) * BigInt(targetAmount);
-    return {
-      amount: Number(numerator / BigInt(denominator)),
-      remainder: numerator % BigInt(denominator),
-    };
-  });
-  let remaining = targetAmount - rows.reduce((sum, item) => sum + item.amount, 0);
-  const remainderOrder = rows
-    .map((item, index) => ({ index, remainder: item.remainder }))
-    .sort((left, right) => left.remainder > right.remainder ? -1 : left.remainder < right.remainder ? 1 : left.index - right.index);
-  for (const { index } of remainderOrder) {
-    if (remaining === 0) break;
-    if (rows[index].amount < getWeight(items[index], index)) {
-      rows[index].amount += 1;
-      remaining -= 1;
-    }
-  }
-  if (remaining) throw new Error("Could not allocate the quotation amount across all items.");
-  return rows.map((item) => item.amount);
-};
-
-const allocateItemAmounts = (items, totals) => {
-  const itemTaxes = allocateAmount(items, totals.gstPaise, totals.subtotalPaise, (item) => item.totalPaise);
-  const grossWeights = items.map((item, index) => item.totalPaise + itemTaxes[index]);
-  const itemDiscounts = allocateAmount(
-    items,
-    totals.discountPaise,
-    totals.grandTotalPaise,
-    (_item, index) => grossWeights[index]
-  );
-  return items.map((item, index) => ({
-    ...item,
-    discountPaise: itemDiscounts[index],
-    netTotalPaise: grossWeights[index] - itemDiscounts[index],
-  }));
 };
 
 const createPages = (quote, totals) => {
@@ -341,7 +291,7 @@ const createPages = (quote, totals) => {
   };
   startPage();
 
-  allocateItemAmounts(totals.items, totals).forEach((item, index) => {
+  totals.items.forEach((item, index) => {
     const rowHeight = itemRowHeight(item);
     if (page.y - rowHeight - 85 < BODY_BOTTOM) startPage();
     drawRow(page.commands, item, index, page.y, rowHeight);
