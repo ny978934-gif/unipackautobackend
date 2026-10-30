@@ -378,8 +378,9 @@ test("generates a valid multi-page PDF with the complete discount breakdown", ()
   assert.match(content, /Rs 10,620\.00/);
   assert.match(content, /DISCOUNT PERCENTAGE \\\(%\\\)/);
   assert.match(content, /10\.00%/);
-  assert.match(content, /DISCOUNT AMOUNT \\\(Rs\\\)/);
-  assert.match(content, /Rs 1,062\.00/);
+  assert.match(content, /DISCOUNT AMOUNT \\\(/);
+  assert.match(content, /1,062\.00/);
+  assert.equal(content.split("0.64 w").length - 1, 2);
   assert.match(content, /FINAL PAYABLE AMOUNT/);
   assert.match(content, /Rs 9,558\.00/);
   assert.doesNotMatch(content, /TOTAL QUANTITY/);

@@ -64,6 +64,19 @@ const commandText = (text, x, y, { font = "F1", size = 8, color = COLORS.ink } =
 const commandLine = (x1, y1, x2, y2, color = COLORS.line, width = 0.6) =>
   `${color} RG ${width} w ${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`;
 
+const commandRupeeGlyph = (x, y, size = 8, color = COLORS.muted) => {
+  const width = size * 0.72;
+  const height = size;
+  const strokeWidth = size * 0.08;
+  return [
+    `${color} RG ${strokeWidth.toFixed(2)} w`,
+    `${x.toFixed(2)} ${(y + height).toFixed(2)} m ${(x + width).toFixed(2)} ${(y + height).toFixed(2)} l S`,
+    `${x.toFixed(2)} ${(y + height - size * 0.2).toFixed(2)} m ${(x + width).toFixed(2)} ${(y + height - size * 0.2).toFixed(2)} l S`,
+    `${(x + size * 0.08).toFixed(2)} ${(y + height - size * 0.05).toFixed(2)} m ${(x + width * 0.62).toFixed(2)} ${(y + height - size * 0.05).toFixed(2)} l ${(x + width).toFixed(2)} ${(y + height - size * 0.3).toFixed(2)} l ${(x + width * 0.62).toFixed(2)} ${(y + height - size * 0.52).toFixed(2)} l ${(x + size * 0.08).toFixed(2)} ${(y + height - size * 0.52).toFixed(2)} l ${(x + width).toFixed(2)} ${y.toFixed(2)} l S`,
+    `${x.toFixed(2)} ${(y + size * 0.23).toFixed(2)} m ${(x + width).toFixed(2)} ${(y + size * 0.23).toFixed(2)} l S`,
+  ].join("\n");
+};
+
 const commandRect = (x, y, width, height, { fill, stroke = COLORS.line, lineWidth = 0.6 } = {}) => {
   const commands = [];
   if (fill) commands.push(`${fill} rg`);
@@ -214,17 +227,31 @@ const drawRow = (commands, item, index, y, rowHeight) => {
 
 const drawSummary = (commands, totals, y) => {
   const rows = [
-    ["NET TOTAL", money(totals.subtotalPaise)],
-    ["GST @ 18%", money(totals.gstPaise)],
-    ["GROSS TOTAL", money(totals.grandTotalPaise)],
-    ["DISCOUNT PERCENTAGE (%)", formatDiscountPercentage(totals)],
-    ["DISCOUNT AMOUNT (Rs)", `-${money(totals.discountPaise)}`],
+    { label: "NET TOTAL", amount: money(totals.subtotalPaise) },
+    { label: "GST @ 18%", amount: money(totals.gstPaise) },
+    { label: "GROSS TOTAL", amount: money(totals.grandTotalPaise) },
+    { label: "DISCOUNT PERCENTAGE (%)", amount: formatDiscountPercentage(totals) },
+    { label: "DISCOUNT AMOUNT", amount: money(totals.discountPaise), currency: true },
   ];
   let cursorY = y;
-  for (const [label, amount] of rows) {
+  for (const { label, amount, currency } of rows) {
     cursorY -= 13;
-    commands.push(rightText(label, 475, cursorY, { size: 8, color: COLORS.muted }));
-    commands.push(rightText(amount, 556, cursorY, { font: "F2", size: 8 }));
+    if (currency) {
+      const labelPrefix = `${label} (`;
+      const labelX = 475 - estimateTextWidth(labelPrefix, 8) - 7 - estimateTextWidth(")", 8);
+      commands.push(commandText(labelPrefix, labelX, cursorY, { size: 8, color: COLORS.muted }));
+      commands.push(commandRupeeGlyph(labelX + estimateTextWidth(labelPrefix, 8) + 1, cursorY - 1));
+      commands.push(commandText(")", labelX + estimateTextWidth(labelPrefix, 8) + 8, cursorY, { size: 8, color: COLORS.muted }));
+
+      const amountValue = amount.replace(/^Rs\s*/, "");
+      const amountX = 556 - estimateTextWidth(amountValue, 8) - estimateTextWidth("-", 8) - 8;
+      commands.push(commandText("-", amountX, cursorY, { font: "F2", size: 8 }));
+      commands.push(commandRupeeGlyph(amountX + estimateTextWidth("-", 8), cursorY - 1));
+      commands.push(commandText(amountValue, amountX + estimateTextWidth("-", 8) + 8, cursorY, { font: "F2", size: 8 }));
+    } else {
+      commands.push(rightText(label, 475, cursorY, { size: 8, color: COLORS.muted }));
+      commands.push(rightText(amount, 556, cursorY, { font: "F2", size: 8 }));
+    }
   }
   cursorY -= 7;
   commands.push(commandRect(355, cursorY - 5, 205, 23, {
