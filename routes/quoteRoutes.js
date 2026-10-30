@@ -249,7 +249,7 @@ const storeAttachment = async (req, file) => {
  * For each spare-part row in the validated quote, fetch the catalogue price
  * from MongoDB using the productId the frontend sent.
  *
- * Returns an array ready for sendFinalQuotation / calculateQuotationTotals:
+ * Returns an array ready for request or finalized quotation totals:
  *   { name, itemCode, quantity, unitPrice (rupees from the catalogue) }
  */
 const enrichPartsWithPrices = async (parts) => {
@@ -308,7 +308,9 @@ router.post("/", parseAttachment, async (req, res) => {
     const savedQuote = await QuoteRequest.create(quote);
     let notificationSent = false;
     try {
-      await sendQuoteRequestNotification(savedQuote);
+      const requestItems = await enrichPartsWithPrices(savedQuote.parts || []);
+      const requestTotals = calculateQuotationTotals(requestItems);
+      await sendQuoteRequestNotification(savedQuote, requestTotals);
       savedQuote.notificationStatus = "sent";
       savedQuote.notificationError = "";
       notificationSent = true;

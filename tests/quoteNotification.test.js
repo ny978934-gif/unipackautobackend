@@ -158,6 +158,15 @@ test("builds a simple customer submission confirmation without request details o
 });
 
 test("builds a complete owner notification with customer and requested spare-part details", () => {
+  const totals = calculateQuotationTotals([
+    {
+      name: "Feed roller",
+      machine: "Wrapping Machine / UPA-100",
+      itemCode: "FR-01",
+      quantity: 3,
+      unitPrice: 200,
+    },
+  ]);
   const email = buildQuoteRequestOwnerEmail({
     id: "request-123",
     company: "Example Packaging",
@@ -177,7 +186,7 @@ test("builds a complete owner notification with customer and requested spare-par
       name: "machine-label.jpg",
       url: "https://files.example.com/machine-label.jpg",
     },
-  });
+  }, totals);
 
   assert.match(email.subject, /New spare parts quotation request/);
   for (const value of [
@@ -190,14 +199,24 @@ test("builds a complete owner notification with customer and requested spare-par
     "Feed roller",
     "Wrapping Machine / UPA-100",
     "FR-01",
-    "Quantity: 3",
+    "Quantity: 3 | Unit price: ₹200.00 | Line total: ₹600.00",
+    "Subtotal: ₹600.00",
+    "GST @ 18%: ₹108.00",
+    "Estimated total including GST: ₹708.00",
+    "final quotation and any discount will be confirmed",
+    "Commercial guidelines:",
+    "Freight Charges: Extra, as applicable.",
     "Please confirm availability.",
     "machine-label.jpg",
     "https://files.example.com/machine-label.jpg",
   ]) {
     assert.ok(email.text.includes(value), `expected owner email to contain: ${value}`);
   }
-  assert.doesNotMatch(email.text, /Grand Total|Discount|application\/pdf/i);
+  assert.doesNotMatch(email.text, /Grand Total|Discount \(|Discount:|application\/pdf/i);
+  assert.match(email.html, /₹600\.00/);
+  assert.match(email.html, /₹108\.00/);
+  assert.match(email.html, /₹708\.00/);
+  assert.match(email.html, /Commercial guidelines/);
   assert.equal("attachments" in email, false);
 });
 
@@ -329,13 +348,25 @@ test("generates a valid multi-page PDF with the complete discount breakdown", ()
   const pdf = buildQuotationPdf(quote, totals);
   const content = pdf.toString("latin1");
   const startXref = Number(content.match(/startxref\n(\d+)/)?.[1]);
+  const pageCount = Number(content.match(/\/Count (\d+)/)?.[1]);
   assert.ok(pdf.subarray(0, 8).toString("ascii").startsWith("%PDF-1.4"));
-  assert.match(content, /\/Count [2-9]\d*/);
+  assert.ok(pageCount > 1);
   assert.equal(pdf.subarray(startXref, startXref + 4).toString("ascii"), "xref");
-  assert.match(content, /Subtotal: Rs 9,000\.00/);
-  assert.match(content, /GST @ 18%: Rs 1,620\.00/);
-  assert.match(content, /Discount \(10%\): Rs 1,062\.00/);
-  assert.match(content, /FINAL AMOUNT DUE: Rs 9,558\.00/);
+  assert.match(content, /Subtotal/);
+  assert.match(content, /Rs 9,000\.00/);
+  assert.match(content, /GST @ 18%/);
+  assert.match(content, /Rs 1,620\.00/);
+  assert.match(content, /Discount \\\(10%\\\)/);
+  assert.match(content, /Rs 1,062\.00/);
+  assert.match(content, /FINAL AMOUNT DUE/);
+  assert.match(content, /Rs 9,558\.00/);
+  assert.match(content, /P-1/);
+  assert.match(content, /Part 90/);
+  assert.match(content, /Rs 11\.80/);
+  assert.match(content, /\/Subtype \/Image .*\/Filter \/DCTDecode/);
+  assert.equal(content.split("(DELIVERY CHALLAN)").length - 1, pageCount);
+  assert.equal(content.split("(TERMS & CONDITIONS)").length - 1, pageCount);
+  assert.equal(content.split("(ICICI Bank | Account: 174405500608 | IFSC: ICIC0001744)").length - 1, pageCount);
 });
 
 test("rounds unit prices to paise before multiplying quantities", () => {
@@ -424,9 +455,9 @@ test("builds the branded spare-parts quotation email with request details and su
     "Bhiwadi, Rajasthan",
     "12 October 2026",
     "UPK/Spare/Quote/Oct-26/d799439011",
-    "Customer Details",
+    "Company Name",
     "Spare Part Description",
-    "Machine/Application",
+    "Machine / Application",
     "Subtotal",
     "GST @ 18%",
     "Grand Total (Including GST)",
@@ -450,16 +481,16 @@ test("builds the branded spare-parts quotation email with request details and su
   assert.doesNotMatch(email.text, /View or download your quotation PDF/);
   assert.equal("attachments" in email, false);
   assert.ok(
-    email.html.indexOf("Customer Details") < email.html.indexOf("Dear Sir/Madam,"),
+    email.html.indexOf("Company Name") < email.html.indexOf("Dear Sir/Madam,"),
     "customer details should appear before the greeting"
   );
   assert.ok(
     email.html.indexOf("Dear Sir/Madam,") < email.html.indexOf("Commercial Terms &amp; Conditions"),
     "the greeting and quotation should appear before the commercial terms"
   );
-  assert.match(email.html, /<strong>GST:<\/strong> 18% Extra or as actual as per Govt\. Norms \./);
-  assert.match(email.html, /<strong>Freight Charges:<\/strong> Extra, as applicable\./);
-  assert.match(email.html, /<strong>Payment Terms:<\/strong> 100% advance payment against the proforma invoice\./);
-  assert.match(email.html, /<strong>Dispatch:<\/strong> The spare parts will be dispatched after receipt of payment confirmation\./);
-  assert.match(email.html, /<strong>Technical Support:<\/strong> Our technical team will contact you, if required, to discuss your requirements and provide further assistance\./);
+  assert.match(email.html, /<strong[^>]*>GST:<\/strong> 18% Extra or as actual as per Govt\. Norms \./);
+  assert.match(email.html, /<strong[^>]*>Freight Charges:<\/strong> Extra, as applicable\./);
+  assert.match(email.html, /<strong[^>]*>Payment Terms:<\/strong> 100% advance payment against the proforma invoice\./);
+  assert.match(email.html, /<strong[^>]*>Dispatch:<\/strong> The spare parts will be dispatched after receipt of payment confirmation\./);
+  assert.match(email.html, /<strong[^>]*>Technical Support:<\/strong> Our technical team will contact you, if required, to discuss your requirements and provide further assistance\./);
 });

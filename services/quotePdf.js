@@ -1,4 +1,25 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { formatINR } from "./quoteNotification.js";
+
+const serverDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const defaultLogoPath = path.resolve(serverDirectory, "..", "client", "src", "assests", "logo.jpeg");
+const PAGE_WIDTH = 595;
+const PAGE_HEIGHT = 842;
+const PAGE_MARGIN = 35;
+const FOOTER_TOP = 126;
+const TABLE_HEADER_Y = 618;
+const BODY_BOTTOM = FOOTER_TOP + 16;
+const COLORS = {
+  black: "0.035 0.035 0.035",
+  yellow: "1 0.78 0",
+  ink: "0.12 0.15 0.20",
+  muted: "0.38 0.41 0.46",
+  line: "0.67 0.69 0.72",
+  pale: "0.96 0.96 0.97",
+  white: "1 1 1",
+};
 
 const pdfText = (value) =>
   String(value ?? "")
@@ -8,12 +29,68 @@ const pdfText = (value) =>
     .replace(/\(/g, "\\(")
     .replace(/\)/g, "\\)");
 
-const wrapText = (value, maxLength = 92) => {
-  const words = String(value ?? "").split(/\s+/);
+const money = (paise) => formatINR(paise).replace("\u20B9", "Rs ");
+
+const findJpegDimensions = (buffer, logoPath) => {
+  let offset = 2;
+  while (offset < buffer.length) {
+    if (buffer[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = buffer[offset + 1];
+    const segmentLength = buffer.readUInt16BE(offset + 2);
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      return {
+        height: buffer.readUInt16BE(offset + 5),
+        width: buffer.readUInt16BE(offset + 7),
+        components: buffer[offset + 9],
+      };
+    }
+    offset += segmentLength + 2;
+  }
+  throw new Error(`Quotation logo is not a supported JPEG image: ${logoPath}`);
+};
+
+const loadLogo = () => {
+  const logoPath = path.resolve(process.env.QUOTATION_LOGO_PATH || defaultLogoPath);
+  const buffer = readFileSync(logoPath);
+  return { buffer, dimensions: findJpegDimensions(buffer, logoPath) };
+};
+
+const commandText = (text, x, y, { font = "F1", size = 8, color = COLORS.ink } = {}) =>
+  `BT /${font} ${size} Tf ${color} rg 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${pdfText(text)}) Tj ET`;
+
+const commandLine = (x1, y1, x2, y2, color = COLORS.line, width = 0.6) =>
+  `${color} RG ${width} w ${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S`;
+
+const commandRect = (x, y, width, height, { fill, stroke = COLORS.line, lineWidth = 0.6 } = {}) => {
+  const commands = [];
+  if (fill) commands.push(`${fill} rg`);
+  if (stroke) commands.push(`${stroke} RG ${lineWidth} w`);
+  commands.push(`${x} ${y} ${width} ${height} re ${fill && stroke ? "B" : fill ? "f" : "S"}`);
+  return commands.join("\n");
+};
+
+const estimateTextWidth = (text, size) => String(text).length * size * 0.5;
+
+const rightText = (text, right, y, options = {}) =>
+  commandText(text, right - estimateTextWidth(text, options.size || 8), y, options);
+
+const wrapText = (value, maxCharacters) => {
+  const words = String(value ?? "").split(/\s+/).filter(Boolean).flatMap((word) => {
+    const segments = [];
+    while (word.length > maxCharacters) {
+      segments.push(word.slice(0, maxCharacters));
+      word = word.slice(maxCharacters);
+    }
+    if (word) segments.push(word);
+    return segments;
+  });
   const lines = [];
   let line = "";
   for (const word of words) {
-    if (line && `${line} ${word}`.length > maxLength) {
+    if (line && `${line} ${word}`.length > maxCharacters) {
       lines.push(line);
       line = word;
     } else {
@@ -24,96 +101,289 @@ const wrapText = (value, maxLength = 92) => {
   return lines.length ? lines : [""];
 };
 
-const money = (paise) => formatINR(paise).replace("\u20B9", "Rs ");
+const formatDate = (date) => new Intl.DateTimeFormat("en-IN", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  timeZone: "Asia/Kolkata",
+}).format(date);
 
-const createQuotationLines = (quote, totals) => {
-  const lines = [
-    "UNIPACKAUTO INDIA PRIVATE LIMITED",
-    "SPARE PART QUOTATION",
-    `Quotation: ${quote.quotation?.number || "Pending"}`,
-    `Date: ${quote.quotation?.sentAt ? new Date(quote.quotation.sentAt).toLocaleDateString("en-IN") : "—"}`,
-    "",
-    `Company: ${quote.company}`,
-    `Contact: ${quote.contactName}`,
-    `Email: ${quote.email}`,
-    `Phone: ${quote.phone}`,
-    `Location: ${quote.city}, ${quote.state}`,
-    `Request ID: ${quote.id || quote._id}`,
-    "",
-    "ITEMS",
-    "No. | Spare part | Machine / application | Item code | Qty | Unit price | Amount",
+const escapeBytes = (buffer) => Buffer.from(buffer);
+
+const drawHeader = (commands, quote) => {
+  commands.push(commandText("DELIVERY CHALLAN", PAGE_MARGIN, 817, { font: "F2", size: 9 }));
+  commands.push(commandRect(PAGE_MARGIN, 746, PAGE_WIDTH - PAGE_MARGIN * 2, 64, {
+    fill: COLORS.black,
+    stroke: COLORS.black,
+    lineWidth: 0,
+  }));
+  commands.push(`${COLORS.yellow} rg ${PAGE_MARGIN + 22} 810 m ${PAGE_WIDTH - PAGE_MARGIN - 8} 810 l ${PAGE_WIDTH - PAGE_MARGIN - 45} 797 l ${PAGE_MARGIN + 22} 797 l f`);
+  commands.push(`q 218 0 0 73 ${PAGE_MARGIN + 9} 741 cm /Im1 Do Q`);
+  commands.push(commandText("Packaging Automation", 365, 779, { font: "F2", size: 9, color: COLORS.white }));
+  commands.push(commandText("Bhiwadi, Rajasthan, India", 365, 765, { size: 7, color: COLORS.white }));
+  commands.push(commandText("Phone: 9215521314, 7232001235", 365, 752, { size: 6.5, color: COLORS.white }));
+  commands.push(commandText("UNIPACKAUTO INDIA PRIVATE LIMITED", PAGE_MARGIN, 728, { font: "F2", size: 14 }));
+  commands.push(commandLine(PAGE_MARGIN, 720, PAGE_WIDTH - PAGE_MARGIN, 720, COLORS.black, 1));
+
+  const boxTop = 710;
+  const boxBottom = 664;
+  const divider = 365;
+  commands.push(commandRect(PAGE_MARGIN, boxBottom, PAGE_WIDTH - PAGE_MARGIN * 2, boxTop - boxBottom));
+  commands.push(commandLine(divider, boxBottom, divider, boxTop));
+  commands.push(commandText("BILL TO", PAGE_MARGIN + 7, 699, { font: "F2", size: 7 }));
+  commands.push(commandText(quote.company, PAGE_MARGIN + 7, 687, { font: "F2", size: 8 }));
+  commands.push(commandText(`Contact: ${quote.contactName}`, PAGE_MARGIN + 7, 676, { size: 7 }));
+  commands.push(commandText(`${quote.city}, ${quote.state}`, PAGE_MARGIN + 7, 666, { size: 7 }));
+  commands.push(commandText("Quotation No.", divider + 9, 699, { font: "F2", size: 7 }));
+  commands.push(commandText(quote.quotation?.number || "Pending", divider + 75, 699, { size: 7 }));
+  commands.push(commandText("Quotation Date", divider + 9, 684, { font: "F2", size: 7 }));
+  commands.push(commandText(formatDate(quote.quotation?.sentAt || new Date()), divider + 75, 684, { size: 7 }));
+  commands.push(commandText("Request ID", divider + 9, 669, { font: "F2", size: 7 }));
+  commands.push(commandText(quote.id || quote._id, divider + 75, 669, { size: 7 }));
+  commands.push(commandText(`Email: ${quote.email}`, PAGE_MARGIN, 650, { size: 7, color: COLORS.muted }));
+  commands.push(commandText(`Phone: ${quote.phone}`, PAGE_MARGIN + 260, 650, { size: 7, color: COLORS.muted }));
+};
+
+const columns = [
+  { key: "number", label: "No.", x: 35, width: 25, align: "center" },
+  { key: "name", label: "ITEM DESCRIPTION", x: 60, width: 210, align: "left" },
+  { key: "code", label: "ITEM CODE", x: 270, width: 61, align: "left" },
+  { key: "quantity", label: "QTY", x: 331, width: 38, align: "right" },
+  { key: "unitPrice", label: "RATE (Rs)", x: 369, width: 62, align: "right" },
+  { key: "discount", label: "DISCOUNT", x: 431, width: 56, align: "right" },
+  { key: "amount", label: "NET (INCL. GST)", x: 487, width: 73, align: "right" },
+];
+const cellCharacterWidths = {
+  number: 4,
+  name: 52,
+  code: 13,
+  quantity: 6,
+  unitPrice: 12,
+  discount: 11,
+  amount: 12,
+};
+
+const drawTableHeader = (commands) => {
+  const y = TABLE_HEADER_Y;
+  commands.push(commandRect(PAGE_MARGIN, y, PAGE_WIDTH - PAGE_MARGIN * 2, 20, {
+    fill: "0.91 0.89 0.95",
+    stroke: COLORS.ink,
+    lineWidth: 0.7,
+  }));
+  for (const column of columns) {
+    const textY = y + 7;
+    const x = column.align === "right"
+      ? column.x + column.width - 4 - estimateTextWidth(column.label, 6)
+      : column.align === "center"
+        ? column.x + (column.width - estimateTextWidth(column.label, 6)) / 2
+        : column.x + 4;
+    commands.push(commandText(column.label, x, textY, { font: "F2", size: 6 }));
+  }
+};
+
+const drawRow = (commands, item, index, y, rowHeight) => {
+  const values = {
+    number: String(index + 1),
+    name: item.name,
+    code: item.itemCode || "—",
+    quantity: String(item.quantity),
+    unitPrice: money(item.unitPricePaise),
+    discount: "—",
+    amount: money(item.netTotalPaise),
+  };
+  const discountRow = item.discountPaise || 0;
+  values.discount = discountRow ? money(discountRow) : "—";
+  commands.push(commandRect(PAGE_MARGIN, y - rowHeight, PAGE_WIDTH - PAGE_MARGIN * 2, rowHeight, {
+    fill: index % 2 ? COLORS.pale : COLORS.white,
+    stroke: COLORS.line,
+    lineWidth: 0.35,
+  }));
+  for (const column of columns) {
+    const text = column.key === "name" && item.machine
+      ? `${values[column.key]} (${item.machine})`
+      : values[column.key];
+    const lines = wrapText(text, cellCharacterWidths[column.key]);
+    lines.forEach((line, lineIndex) => {
+      const x = column.align === "right"
+        ? column.x + column.width - 4 - estimateTextWidth(line, 6.5)
+        : column.align === "center"
+          ? column.x + (column.width - estimateTextWidth(line, 6.5)) / 2
+          : column.x + 4;
+      commands.push(commandText(line, x, y - 12 - lineIndex * 9, { size: 6.5 }));
+    });
+  }
+  for (const column of columns.slice(1)) {
+    commands.push(commandLine(column.x, y - rowHeight, column.x, y, COLORS.line, 0.35));
+  }
+};
+
+const drawSummary = (commands, totals, y) => {
+  const rows = [
+    ["Subtotal", money(totals.subtotalPaise)],
+    ["GST @ 18%", money(totals.gstPaise)],
+    ["Total including GST", money(totals.grandTotalPaise)],
+    [
+      totals.discountType === "percentage"
+        ? `Discount (${totals.discountValue}%)`
+        : totals.discountType === "fixed"
+          ? `Discount (${money(totals.discountValuePaise)})`
+          : "Discount",
+      `-${money(totals.discountPaise)}`,
+    ],
   ];
+  let cursorY = y;
+  for (const [label, amount] of rows) {
+    cursorY -= 13;
+    commands.push(rightText(label, 475, cursorY, { size: 8, color: COLORS.muted }));
+    commands.push(rightText(amount, 556, cursorY, { font: "F2", size: 8 }));
+  }
+  cursorY -= 7;
+  commands.push(commandRect(355, cursorY - 5, 205, 23, {
+    fill: "0.98 0.94 0.77",
+    stroke: COLORS.yellow,
+    lineWidth: 0.8,
+  }));
+  commands.push(commandText("FINAL AMOUNT DUE", 362, cursorY + 3, { font: "F2", size: 8 }));
+  commands.push(rightText(money(totals.finalTotalPaise), 552, cursorY + 3, { font: "F2", size: 9 }));
+  commands.push(commandText("Discount is applied after GST.", 355, cursorY - 15, { size: 6.5, color: COLORS.muted }));
+  return cursorY - 22;
+};
 
-  totals.items.forEach((item, index) => {
-    lines.push(...wrapText(
-      `${index + 1}. ${item.name} | ${item.machine || "-"} | ${item.itemCode || "-"} | ${item.quantity} | ${money(item.unitPricePaise)} | ${money(item.totalPaise)}`,
-      92
-    ));
+const terms = [
+  "GST: 18% Extra or as actual as per Govt. Norms.",
+  "Freight charges: Extra, as applicable.",
+  "Payment terms: 100% advance payment against the proforma invoice.",
+  "Dispatch after receipt of payment confirmation.",
+  "Contact our technical team for assistance or clarification.",
+];
+
+const drawFooter = (commands, pageNumber, pageCount) => {
+  commands.push(commandLine(PAGE_MARGIN, FOOTER_TOP, PAGE_WIDTH - PAGE_MARGIN, FOOTER_TOP, COLORS.black, 0.8));
+  commands.push(commandText("BANK DETAILS", PAGE_MARGIN, 113, { font: "F2", size: 6.5 }));
+  commands.push(commandText("UNIPACKAUTO INDIA PRIVATE LIMITED", PAGE_MARGIN, 103, { font: "F2", size: 6 }));
+  commands.push(commandText("ICICI Bank | Account: 174405500608 | IFSC: ICIC0001744", PAGE_MARGIN, 94, { size: 5.7 }));
+  commands.push(commandText("Branch: Tapukera", PAGE_MARGIN, 85, { size: 5.7 }));
+  commands.push(commandText("TERMS & CONDITIONS", 330, 113, { font: "F2", size: 6.5 }));
+  terms.forEach((term, index) => {
+    commands.push(commandText(`${index + 1}. ${term}`, 330, 103 - index * 8, { size: 5.2 }));
+  });
+  commands.push(commandLine(PAGE_MARGIN, 46, PAGE_WIDTH - PAGE_MARGIN, 46, COLORS.line, 0.5));
+  commands.push(commandText("Office No. 2, Behind Shiv Shakti Oil Meal, Thada - Trehan Road, Alwar Road, Bhiwadi, Rajasthan - 301018", PAGE_MARGIN, 35, { size: 5.5 }));
+  commands.push(commandText("Phone: 9215521314, 7232001235, 9991226074 | info@unipackauto.in | services.upa@gmail.com | uniquepackagingandautomation@gmail.com", PAGE_MARGIN, 25, { size: 4.7 }));
+  commands.push(rightText(`Page ${pageNumber} of ${pageCount}`, PAGE_WIDTH - PAGE_MARGIN, 14, { size: 5.5, color: COLORS.muted }));
+};
+
+const itemRowHeight = (item) => {
+  const cells = {
+    name: item.machine ? `${item.name} (${item.machine})` : item.name,
+    code: item.itemCode || "—",
+    quantity: item.quantity,
+    unitPrice: money(item.unitPricePaise),
+    discount: money(item.discountPaise || 0),
+    amount: money(item.netTotalPaise),
+  };
+  const maximumLines = Math.max(
+    1,
+    ...Object.entries(cells).map(([key, value]) => wrapText(value, cellCharacterWidths[key]).length)
+  );
+  return Math.max(25, maximumLines * 9 + 12);
+};
+
+const allocateAmount = (items, targetAmount, denominator, getWeight) => {
+  if (!denominator || !targetAmount) return items.map(() => 0);
+  const rows = items.map((item, index) => {
+    const weight = getWeight(item, index);
+    const numerator = BigInt(weight) * BigInt(targetAmount);
+    return {
+      amount: Number(numerator / BigInt(denominator)),
+      remainder: numerator % BigInt(denominator),
+    };
+  });
+  let remaining = targetAmount - rows.reduce((sum, item) => sum + item.amount, 0);
+  const remainderOrder = rows
+    .map((item, index) => ({ index, remainder: item.remainder }))
+    .sort((left, right) => left.remainder > right.remainder ? -1 : left.remainder < right.remainder ? 1 : left.index - right.index);
+  for (const { index } of remainderOrder) {
+    if (remaining === 0) break;
+    if (rows[index].amount < getWeight(items[index], index)) {
+      rows[index].amount += 1;
+      remaining -= 1;
+    }
+  }
+  if (remaining) throw new Error("Could not allocate the quotation amount across all items.");
+  return rows.map((item) => item.amount);
+};
+
+const allocateItemAmounts = (items, totals) => {
+  const itemTaxes = allocateAmount(items, totals.gstPaise, totals.subtotalPaise, (item) => item.totalPaise);
+  const grossWeights = items.map((item, index) => item.totalPaise + itemTaxes[index]);
+  const itemDiscounts = allocateAmount(
+    items,
+    totals.discountPaise,
+    totals.grandTotalPaise,
+    (_item, index) => grossWeights[index]
+  );
+  return items.map((item, index) => ({
+    ...item,
+    discountPaise: itemDiscounts[index],
+    netTotalPaise: grossWeights[index] - itemDiscounts[index],
+  }));
+};
+
+const createPages = (quote, totals) => {
+  const pages = [];
+  let page = { commands: [], y: TABLE_HEADER_Y };
+  const startPage = () => {
+    page = { commands: [], y: TABLE_HEADER_Y };
+    drawHeader(page.commands, quote);
+    drawTableHeader(page.commands);
+    pages.push(page);
+  };
+  startPage();
+
+  allocateItemAmounts(totals.items, totals).forEach((item, index) => {
+    const rowHeight = itemRowHeight(item);
+    if (page.y - rowHeight - 85 < BODY_BOTTOM) startPage();
+    drawRow(page.commands, item, index, page.y, rowHeight);
+    page.y -= rowHeight;
   });
 
-  const discountDescription = totals.discountType === "percentage"
-    ? `Discount (${totals.discountValue}%): ${money(totals.discountPaise)}`
-    : totals.discountType === "fixed"
-      ? `Discount (${money(totals.discountValuePaise)}): ${money(totals.discountPaise)}`
-      : `Discount: ${money(totals.discountPaise)}`;
-  lines.push(
-    "",
-    `Subtotal: ${money(totals.subtotalPaise)}`,
-    `GST @ 18%: ${money(totals.gstPaise)}`,
-    `Total including GST: ${money(totals.grandTotalPaise)}`,
-    discountDescription,
-    `FINAL AMOUNT DUE: ${money(totals.finalTotalPaise)}`,
-    "",
-    "Discount is applied after GST.",
-    "",
-    "Commercial Terms & Conditions:",
-    "1. GST: 18% Extra or as actual as per Govt. Norms.",
-    "2. Freight charges: Extra, as applicable.",
-    "3. Payment terms: 100% advance payment against the proforma invoice.",
-    "4. Dispatch after receipt of payment confirmation.",
-    "5. Contact our technical team for assistance or clarification.",
-    "",
-    "Bank Details for Payment",
-    "Account Holder: UNIPACKAUTO INDIA PRIVATE LIMITED",
-    "Bank: ICICI Bank | Branch: Tapukera",
-    "Account No.: 174405500608 | IFSC: ICIC0001744",
-    "",
-    "Unipackauto India Pvt. Ltd. | 9215521314, 7232001235, 9991226074",
-    "info@unipackauto.in"
-  );
-  return lines.flatMap((line) => wrapText(line));
+  if (page.y - 85 < BODY_BOTTOM) startPage();
+  drawSummary(page.commands, totals, page.y - 4);
+  pages.forEach(({ commands }, index) => drawFooter(commands, index + 1, pages.length));
+  return pages;
 };
 
-const createPageStream = (lines) => {
-  const commands = ["BT", "/F1 9 Tf", "50 790 Td", "12 TL"];
-  for (const line of lines) {
-    commands.push(`(${pdfText(line)}) Tj`, "T*");
-  }
-  commands.push("ET");
-  return Buffer.from(commands.join("\n"), "ascii");
+const createImageObject = (logo, logoDimensions) => {
+  const colorSpace = logoDimensions.components === 1 ? "/DeviceGray" : "/DeviceRGB";
+  return Buffer.concat([
+    Buffer.from(
+      `<< /Type /XObject /Subtype /Image /Width ${logoDimensions.width} /Height ${logoDimensions.height} /ColorSpace ${colorSpace} /BitsPerComponent 8 /Filter /DCTDecode /Length ${logo.length} >>\nstream\n`,
+      "ascii"
+    ),
+    escapeBytes(logo),
+    Buffer.from("\nendstream", "ascii"),
+  ]);
 };
 
-export const buildQuotationPdf = (quote, totals) => {
-  const allLines = createQuotationLines(quote, totals);
-  const linesPerPage = 61;
-  const pages = [];
-  for (let index = 0; index < allLines.length; index += linesPerPage) {
-    pages.push(allLines.slice(index, index + linesPerPage));
-  }
+const createPdf = (pages, logo, logoDimensions) => {
   const objects = [
     Buffer.from("<< /Type /Catalog /Pages 2 0 R >>", "ascii"),
     null,
     Buffer.from("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>", "ascii"),
+    Buffer.from("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>", "ascii"),
+    Buffer.from("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>", "ascii"),
+    createImageObject(logo, logoDimensions),
   ];
   const pageObjectIds = [];
 
-  for (const lines of pages) {
-    const stream = createPageStream(lines);
+  for (const page of pages) {
+    const stream = Buffer.from(page.commands.join("\n"), "ascii");
     const pageId = objects.length + 1;
     const contentId = pageId + 1;
     pageObjectIds.push(`${pageId} 0 R`);
     objects.push(
-      Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`, "ascii"),
+      Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> /XObject << /Im1 6 0 R >> >> /Contents ${contentId} 0 R >>`, "ascii"),
       Buffer.concat([
         Buffer.from(`<< /Length ${stream.length} >>\nstream\n`, "ascii"),
         stream,
@@ -147,4 +417,9 @@ export const buildQuotationPdf = (quote, totals) => {
   ].join("");
   chunks.push(Buffer.from(xref, "ascii"));
   return Buffer.concat(chunks);
+};
+
+export const buildQuotationPdf = (quote, totals) => {
+  const quotationLogo = loadLogo();
+  return createPdf(createPages(quote, totals), quotationLogo.buffer, quotationLogo.dimensions);
 };

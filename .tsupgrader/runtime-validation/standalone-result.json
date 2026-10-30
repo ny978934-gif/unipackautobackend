@@ -1,0 +1,76 @@
+{
+  "planHash": "585cfc2cbcb77c7e41a026384a60d15db0e11d049eb57a17f6d43c24c5949021",
+  "phase": "standalone",
+  "recordedAtUtc": "2026-10-30T07:41:38.3551140Z",
+  "retryCount": 2,
+  "resetBaseline": false,
+  "complete": true,
+  "result": {
+    "setupSucceeded": true,
+    "setupDurationMs": 0,
+    "setupFailureOutput": null,
+    "assertions": [
+      {
+        "name": "server-tests-pass",
+        "kind": "process",
+        "verificationMethod": "test-results",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E unipackauto-server@1.0.0 test\r\n\u003E node --test tests/*.test.js\r\n\r\n\u2714 stores admin passwords as salted scrypt hashes and verifies credentials (914.3525ms)\r\n\u2714 creates signed, expiring admin tokens and rejects tampering (5.9126ms)\r\n\u2714 rejects missing or undersized JWT secrets (1.8641ms)\r\n\u2714 extracts a Cloudinary public ID with a version (2.768ms)\r\n\u2714 extracts a Cloudinary public ID when transformations precede the version (0.5513ms)\r\n\u2714 ignores non-Cloudinary image URLs (0.435ms)\r\n\u2714 allows both production website origins (4.7196ms)\r\n\u2714 does not allow unrelated domains that contain the production hostname (1.3553ms)\r\n\u2714 continues to support configured extra origins (0.7788ms)\r\n\u2714 configures Gmail notifications and removes spaces from grouped app passwords (8.516ms)\r\n\u2714 rejects partially configured Gmail credentials (1.3844ms)\r\n\u2714 sends Gmail notifications to SMTP_USER instead of ADMIN_EMAIL when configured (0.4342ms)\r\n\u2714 falls back to ADMIN_EMAIL when SMTP_USER is not configured (0.3743ms)\r\n\u2714 gives actionable guidance for common Gmail authentication and VPS network failures (1.5719ms)\r\n\u2714 sends identical quotation content separately to the owner and customer (1.21ms)\r\n\u2714 deduplicates a customer who is also the configured quotation owner (0.5766ms)\r\n\u2714 attempts delivery to both recipients and reports partial delivery failures (1.3347ms)\r\n\u2714 builds a simple customer submission confirmation without request details or PDF links (26.9255ms)\r\n\u2714 builds a complete owner notification with customer and requested spare-part details (35.4217ms)\r\n\u2714 rejects an invalid customer email before attempting SMTP delivery (1.5205ms)\r\n\u2714 does not send new machine quote notifications (0.4848ms)\r\n\u2714 retains custom SMTP configuration when Gmail credentials are not set (0.4903ms)\r\n\u2714 calculates item totals, subtotal, 18% GST, and grand total in integer paise (1.8175ms)\r\n\u2714 applies percentage and fixed discounts after GST (0.4209ms)\r\n\u2714 final quotation email includes the discount and amount due without customer PDF links (102.6534ms)\r\n\u2714 rejects discounts above the tax-inclusive total and percentages above 100 (0.7812ms)\r\n\u2714 generates a valid multi-page PDF with the complete discount breakdown (76.2749ms)\r\n\u2714 rounds unit prices to paise before multiplying quantities (0.5418ms)\r\n\u2714 rounds fractional paise without shifting leading zeroes (0.3802ms)\r\n\u2714 rejects invalid quotation quantities and prices (0.5487ms)\r\n\u2714 builds the branded spare-parts quotation email with request details and supplied terms (4.589ms)\r\n\u2714 quote request schema preserves existing machine quote details (59.1466ms)\r\n\u2714 new quote submissions reject machine quote requests (1.6777ms)\r\n\u2714 quote request schema validates spare part quantities and request status (14.4968ms)\r\n\u2714 quotation snapshot and discount fields validate (36.1639ms)\r\n\u2714 finds a spare-part table regardless of worksheet name (107.5534ms)\r\n\u2714 detects case-insensitive headers with extra spaces (12.9584ms)\r\n\u2714 chooses the matching sheet with the most recognized columns, then data rows (9.1702ms)\r\n\u2714 uses the matching sheet with the most data rows when recognized columns tie (50.7097ms)\r\n\u2714 rejects Excel files without a valid part-name table and data row (17.9536ms)\r\n\u2714 parses Word tables with field headings (4.7971ms)\r\n\u2714 parses Word paragraphs with labeled fields and multiple parts (0.8115ms)\r\n\u2714 exports only the five spare-part fields (136.7842ms)\r\n\u2714 keeps the five export columns when inventory is empty (0.6163ms)\r\n\u2714 spare-part API serialization omits fields outside the spare-part contract (75.8959ms)\r\n\u2714 supports five spare-part images, rejects more than five, and preserves machine galleries (12.7193ms)\r\n\u2714 rejects an invalid category filter on spare-part exports (1.6756ms)\r\n\u2139 tests 47\r\n\u2139 suites 0\r\n\u2139 pass 47\r\n\u2139 fail 0\r\n\u2139 cancelled 0\r\n\u2139 skipped 0\r\n\u2139 todo 0\r\n\u2139 duration_ms 10951.3412\r\n",
+        "durationMs": 19820,
+        "testResults": {
+          "testFramework": "unknown",
+          "runnerDetectedFrom": "none",
+          "testsTotal": 0,
+          "testsPassed": 0,
+          "testsFailed": 0,
+          "testsSkipped": 0,
+          "parseFailed": true
+        }
+      },
+      {
+        "name": "health-endpoint-200",
+        "kind": "http-probe",
+        "verificationMethod": "http-status",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": null,
+        "outputSample": "HTTP 200\n{\u0022status\u0022:\u0022ok\u0022,\u0022database\u0022:\u0022configured\u0022}\n--- server output ---\n\r\n\u003E unipackauto-server@1.0.0 start\r\n\u003E node server.js\r\n\r\nMongoDB connection error: MONGO_URI is not configured. Add it to server/.env.\r\nServer running (DB offline) on http://localhost:51873\r\n",
+        "durationMs": 8673
+      }
+    ],
+    "executions": [
+      {
+        "source": "server-tests-pass",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "test"
+        ],
+        "cwd": "D:\\New folder\\unipackauto-website\\unipackauto-website\\server",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "health-endpoint-200",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "run",
+          "start"
+        ],
+        "cwd": "D:\\New folder\\unipackauto-website\\unipackauto-website\\server",
+        "env": {
+          "MONGO_URI": "",
+          "PORT": "51873"
+        },
+        "prependPath": [],
+        "platform": "win32"
+      }
+    ]
+  }
+}

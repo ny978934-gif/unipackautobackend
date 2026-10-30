@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-10-30T07:38:29Z",
+  "generatedOnPlatform": "win32",
+  "projectType": "server",
+  "assertions": [
+    {
+      "name": "server-tests-pass",
+      "kind": "process",
+      "command": "npm",
+      "args": ["test"],
+      "verificationMethod": "test-results",
+      "expected": "0",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "health-endpoint-200",
+      "kind": "http-probe",
+      "startCommand": "npm",
+      "startArgs": ["run", "start"],
+      "env": {
+        "MONGO_URI": "",
+        "PORT": "51873"
+      },
+      "url": "http://localhost:51873/api/health",
+      "verificationMethod": "http-status",
+      "expected": "200",
+      "timeoutSeconds": 60
+    }
+  ]
+}

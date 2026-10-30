@@ -583,10 +583,11 @@ export const buildQuoteRequestConfirmationEmail = (quote) => ({
   html: `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:600px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">Request received</td></tr><tr><td style="padding:28px;line-height:1.6;"><p>Hello ${esc(quote.contactName)},</p><p>We have received the spare parts quotation request for <strong>${esc(quote.company)}</strong>.</p><p>Our team will review your request and contact you with a quotation.</p><p style="color:#777;font-size:13px;">Request ID: ${esc(quote.id || quote._id)}</p><p>Thank you,<br><strong>Unipackauto India Pvt. Ltd.</strong></p></td></tr></table></body></html>`,
 });
 
-export const buildQuoteRequestOwnerEmail = (quote) => {
+export const buildQuoteRequestOwnerEmail = (quote, totals) => {
   const requestId = quote.id || quote._id;
-  const parts = (quote.parts || []).map((part, index) =>
-    `${index + 1}. ${part.partName} | ${part.machine} | Item code: ${part.itemCode || "—"} | Quantity: ${part.quantity}`
+  const pricedItems = totals?.items || [];
+  const parts = pricedItems.map((item, index) =>
+    `${index + 1}. ${item.name} | ${item.machine || "—"} | Item code: ${item.itemCode || "—"} | Quantity: ${item.quantity} | Unit price: ${formatINR(item.unitPricePaise)} | Line total: ${formatINR(item.totalPaise)}`
   );
   const attachmentText = quote.attachment?.url
     ? `\nAttachment: ${quote.attachment.name || quote.attachment.url}\n${quote.attachment.url}`
@@ -603,18 +604,32 @@ export const buildQuoteRequestOwnerEmail = (quote) => {
     "",
     "Requested spare parts:",
     ...parts,
+    "",
+    `Subtotal: ${formatINR(totals.subtotalPaise)}`,
+    `GST @ 18%: ${formatINR(totals.gstPaise)}`,
+    `Estimated total including GST: ${formatINR(totals.grandTotalPaise)}`,
+    "Estimate only; the final quotation and any discount will be confirmed by an admin.",
+    "",
+    "Commercial guidelines:",
+    ...commercialTerms.map((term, index) => `${index + 1}. ${term}`),
     ...(quote.message ? ["", `Customer message: ${quote.message}`] : []),
     ...(attachmentText ? [attachmentText] : []),
   ].join("\n");
-  const partRows = (quote.parts || []).map((part, index) => `
+  const partRows = pricedItems.map((item, index) => `
     <tr>
       <td style="${COL_STYLE}">${index + 1}</td>
-      <td style="${COL_STYLE}">${esc(part.partName)}</td>
-      <td style="${COL_STYLE}">${esc(part.machine)}</td>
-      <td style="${COL_STYLE}">${esc(part.itemCode || "—")}</td>
-      <td align="right" style="${COL_STYLE}">${esc(part.quantity)}</td>
+      <td style="${COL_STYLE}">${esc(item.name)}</td>
+      <td style="${COL_STYLE}">${esc(item.machine || "—")}</td>
+      <td style="${COL_STYLE}">${esc(item.itemCode || "—")}</td>
+      <td align="right" style="${COL_STYLE}">${esc(item.quantity)}</td>
+      <td align="right" style="${COL_STYLE}">${formatINR(item.unitPricePaise)}</td>
+      <td align="right" style="${COL_STYLE}">${formatINR(item.totalPaise)}</td>
     </tr>`).join("");
-  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:760px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">New spare parts quotation request</td></tr><tr><td style="padding:28px;line-height:1.6;"><p><strong>Request ID:</strong> ${esc(requestId)}</p><p><strong>Company:</strong> ${esc(quote.company)}<br><strong>Contact:</strong> ${esc(quote.contactName)}<br><strong>Email:</strong> ${esc(quote.email)}<br><strong>Phone:</strong> ${esc(quote.phone)}<br><strong>Location:</strong> ${esc(quote.city)}, ${esc(quote.state)}</p><h2 style="font-size:17px;">Requested spare parts</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><thead><tr><th style="${HEAD_STYLE}">#</th><th style="${HEAD_STYLE}">Spare part</th><th style="${HEAD_STYLE}">Machine / application</th><th style="${HEAD_STYLE}">Item code</th><th style="${HEAD_STYLE}">Quantity</th></tr></thead><tbody>${partRows}</tbody></table>${quote.message ? `<p><strong>Customer message:</strong><br>${esc(quote.message)}</p>` : ""}${quote.attachment?.url ? `<p><strong>Customer attachment:</strong> <a href="${esc(quote.attachment.url)}">${esc(quote.attachment.name || "View attachment")}</a></p>` : ""}</td></tr></table></body></html>`;
+  const termsHtml = commercialTerms.map((term) => {
+    const separator = term.indexOf(":");
+    return `<li><strong>${esc(term.slice(0, separator + 1))}</strong>${esc(term.slice(separator + 1))}</li>`;
+  }).join("");
+  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:900px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">New spare parts quotation request</td></tr><tr><td style="padding:28px;line-height:1.6;"><p><strong>Request ID:</strong> ${esc(requestId)}</p><p><strong>Company:</strong> ${esc(quote.company)}<br><strong>Contact:</strong> ${esc(quote.contactName)}<br><strong>Email:</strong> ${esc(quote.email)}<br><strong>Phone:</strong> ${esc(quote.phone)}<br><strong>Location:</strong> ${esc(quote.city)}, ${esc(quote.state)}</p><h2 style="font-size:17px;">Requested spare parts and catalogue pricing</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><thead><tr><th style="${HEAD_STYLE}">#</th><th style="${HEAD_STYLE}">Spare part</th><th style="${HEAD_STYLE}">Machine / application</th><th style="${HEAD_STYLE}">Item code</th><th style="${HEAD_STYLE}">Quantity</th><th style="${HEAD_STYLE}">Unit price</th><th style="${HEAD_STYLE}">Line total</th></tr></thead><tbody>${partRows}</tbody><tfoot><tr><td colspan="6" align="right" style="${COL_STYLE}">Subtotal</td><td align="right" style="${COL_STYLE}">${formatINR(totals.subtotalPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}">GST @ 18%</td><td align="right" style="${COL_STYLE}">${formatINR(totals.gstPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}font-weight:bold;">Estimated total including GST</td><td align="right" style="${COL_STYLE}font-weight:bold;">${formatINR(totals.grandTotalPaise)}</td></tr></tfoot></table><p style="font-size:12px;color:#687185;">Estimate only; the final quotation and any discount will be confirmed by an admin.</p><h2 style="font-size:17px;">Commercial guidelines</h2><ol>${termsHtml}</ol>${quote.message ? `<p><strong>Customer message:</strong><br>${esc(quote.message)}</p>` : ""}${quote.attachment?.url ? `<p><strong>Customer attachment:</strong> <a href="${esc(quote.attachment.url)}">${esc(quote.attachment.name || "View attachment")}</a></p>` : ""}</td></tr></table></body></html>`;
   return {
     subject: `New spare parts quotation request - ${requestId}`,
     text,
@@ -622,7 +637,7 @@ export const buildQuoteRequestOwnerEmail = (quote) => {
   };
 };
 
-export async function sendQuoteRequestNotification(quote) {
+export async function sendQuoteRequestNotification(quote, totals) {
   if (quote.quoteType !== "sparePart") {
     throw new Error("Only spare-part quote notifications are supported.");
   }
@@ -633,7 +648,10 @@ export async function sendQuoteRequestNotification(quote) {
     });
   }
   const { config, transporter } = makeTransporter();
-  const ownerEmail = buildQuoteRequestOwnerEmail(quote);
+  if (!totals?.items?.length) {
+    throw new Error("Catalogue prices are required for the initial owner quotation email.");
+  }
+  const ownerEmail = buildQuoteRequestOwnerEmail(quote, totals);
   const customerEmailMessage = buildQuoteRequestConfirmationEmail(quote);
   const commonHeaders = {
     from: `"UnipackAuto Enquiries" <${config.from}>`,
