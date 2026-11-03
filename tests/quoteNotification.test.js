@@ -97,6 +97,43 @@ test("sends identical quotation content separately to the owner and customer", a
   assert.equal(result.deliveries.length, 2);
 });
 
+test("sends the generated quotation PDF attachment to both owner and customer", async () => {
+  const sentMessages = [];
+  const transporter = {
+    async sendMail(message) {
+      sentMessages.push(message);
+      return { accepted: [message.to] };
+    },
+  };
+  const pdf = Buffer.from("%PDF-1.4 test quotation");
+  const quotationEmail = buildSparePartsQuotationEmail(
+    { id: "request-123" },
+    calculateQuotationTotals([{ name: "Roller", quantity: 1, unitPrice: 100 }]),
+    "UPK/Spare/Quote/Nov-26/request-123",
+    new Date("2026-11-03T00:00:00.000Z"),
+    pdf
+  );
+  const message = {
+    subject: quotationEmail.subject,
+    text: quotationEmail.text,
+    html: quotationEmail.html,
+    attachments: quotationEmail.attachments,
+  };
+
+  await deliverEmailToRecipients(transporter, message, [
+    "owner@unipackauto.in",
+    "customer@example.com",
+  ]);
+
+  assert.equal(sentMessages.length, 2);
+  for (const sentMessage of sentMessages) {
+    assert.equal(sentMessage.attachments.length, 1);
+    assert.equal(sentMessage.attachments[0].filename, "UPK-Spare-Quote-Nov-26-request-123.pdf");
+    assert.equal(sentMessage.attachments[0].contentType, "application/pdf");
+    assert.equal(sentMessage.attachments[0].content, pdf);
+  }
+});
+
 test("deduplicates a customer who is also the configured quotation owner", async () => {
   const sentMessages = [];
   const transporter = {

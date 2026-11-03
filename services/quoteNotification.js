@@ -229,7 +229,13 @@ export const bankDetails = [
   ["IFSC Code", "ICIC0001744"],
 ];
 
-export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, issuedAt = new Date()) => {
+export const buildSparePartsQuotationEmail = (
+  quote,
+  totals,
+  quotationNumber,
+  issuedAt = new Date(),
+  quotationPdf
+) => {
   const date = formatQuotationDate(issuedAt);
   const subject = `Unipackauto Spare Parts Quote - ${quotationNumber}`;
   const textLines = [
@@ -383,7 +389,20 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
 </body>
 </html>`;
 
-  return { subject, text: textLines.join("\n"), html, date, quotationNumber };
+  return {
+    subject,
+    text: textLines.join("\n"),
+    html,
+    date,
+    quotationNumber,
+    ...(quotationPdf ? {
+      attachments: [{
+        filename: `${quotationNumber.replace(/[^a-z0-9-]/gi, "-")}.pdf`,
+        content: quotationPdf,
+        contentType: "application/pdf",
+      }],
+    } : {}),
+  };
 };
 
 // ── SMTP transport factory ────────────────────────────────────────────────────
@@ -666,9 +685,12 @@ export async function sendQuoteRequestNotification(quote, totals) {
   };
 }
 
-export async function sendFinalQuotation(quote, totals, { quotationNumber, issuedAt }) {
+export async function sendFinalQuotation(quote, totals, { quotationNumber, issuedAt, quotationPdf }) {
   if (quote.quoteType !== "sparePart") {
     throw new Error("Only spare-part quotations are supported.");
+  }
+  if (!Buffer.isBuffer(quotationPdf)) {
+    throw new Error("A generated quotation PDF is required to send the finalized quotation.");
   }
   const customerEmail = String(quote.email || "").trim();
   if (!EMAIL_RE.test(customerEmail)) {
@@ -677,13 +699,14 @@ export async function sendFinalQuotation(quote, totals, { quotationNumber, issue
     });
   }
   const { config, transporter } = makeTransporter();
-  const email = buildSparePartsQuotationEmail(quote, totals, quotationNumber, issuedAt);
+  const email = buildSparePartsQuotationEmail(quote, totals, quotationNumber, issuedAt, quotationPdf);
   const delivery = await deliverEmailToRecipients(transporter, {
     from: `"UnipackAuto Enquiries" <${config.from}>`,
     replyTo: quote.email,
     subject: email.subject,
     text: email.text,
     html: email.html,
+    attachments: email.attachments,
   }, [config.to, customerEmail]);
   return {
     ...delivery,

@@ -151,9 +151,11 @@ const sendFinalizedQuotation = async (quote, totals, { issuedAt }) => {
   await quote.save();
 
   try {
+    const quotationPdf = buildQuotationPdf(quote, totals);
     await sendFinalQuotation(quote, totals, {
       quotationNumber,
       issuedAt,
+      quotationPdf,
     });
     quote.notificationStatus = "sent";
     quote.notificationError = "";
