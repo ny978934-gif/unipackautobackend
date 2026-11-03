@@ -346,7 +346,8 @@ test("final quotation email includes item discounts and the GST-inclusive total"
 
   assert.match(email.text, /Discount Amount \(₹\)/);
   assert.match(email.text, /₹200\.00 \| 10\.00% \| -₹20\.00 \| ₹180\.00/);
-  assert.match(email.text, /Subtotal after item discounts: ₹180\.00/);
+  assert.match(email.text, /Total: ₹180\.00/);
+  assert.doesNotMatch(email.text, /Subtotal after item discounts/);
   assert.match(email.text, /GST @ 18%: ₹32\.40/);
   assert.match(email.text, /Final Amount Including GST: ₹212\.40/);
   assert.match(email.html, /Discount Amount \(₹\)/);
@@ -549,7 +550,7 @@ test("builds the branded spare-parts quotation email with request details and su
     "Company Name",
     "Spare Part Description",
     "Machine / Application",
-    "Subtotal after item discounts",
+    "Total",
     "GST @ 18%",
     "Discount (%)",
     "Discount Amount",

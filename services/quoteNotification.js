@@ -181,7 +181,7 @@ const buildItemisedTable = (totals) => {
     </thead>
     <tbody>
       ${rows}
-      ${summaryRow("Subtotal after item discounts", formatINR(totals.subtotalPaise))}
+      ${summaryRow("Total", formatINR(totals.subtotalPaise))}
       ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
       <tr>
         <td colspan="8" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Final Amount Including GST</td>
@@ -258,7 +258,7 @@ export const buildSparePartsQuotationEmail = (
     ...totals.items.map((item, index) =>
       `${index + 1} | ${item.name} | ${item.machine || "—"} | ${item.itemCode || "—"} | ${item.quantity} | ${formatINR(item.unitPricePaise)} | ${item.discountPercentage.toFixed(2)}% | -${formatINR(item.discountPaise)} | ${formatINR(item.netTotalPaise)}`
     ),
-    `Subtotal after item discounts: ${formatINR(totals.subtotalPaise)}`,
+    `Total: ${formatINR(totals.subtotalPaise)}`,
     `GST @ 18%: ${formatINR(totals.gstPaise)}`,
     `Final Amount Including GST: ${formatINR(totals.finalTotalPaise)}`,
     "",
