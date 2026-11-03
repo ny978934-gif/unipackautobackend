@@ -92,6 +92,7 @@ const applyQuotationTotals = (quote, totals, quotationNumber, issuedAt) => {
     name: item.name,
     itemCode: item.itemCode || "",
     machine: item.machine || "",
+    uom: item.uom || "",
     quantity: item.quantity,
     unitPricePaise: item.unitPricePaise,
     totalPaise: item.totalPaise,
@@ -107,10 +108,27 @@ const applyQuotationTotals = (quote, totals, quotationNumber, issuedAt) => {
 
 const getQuotationTotals = async (quote, discountPercentages) => {
   if (quote.quotation?.items?.length) {
+    const productIds = [
+      ...new Set(
+        (quote.parts || [])
+          .map((part) => part.productId)
+          .filter((id) => id && mongoose.isValidObjectId(id))
+          .map(String)
+      ),
+    ];
+    const products = productIds.length
+      ? await Product.find(
+        { _id: { $in: productIds }, type: "sparepart" },
+        { _id: 1, uom: 1 }
+      ).lean()
+      : [];
+    const uomByProductId = new Map(products.map((product) => [String(product._id), product.uom || ""]));
+
     return calculateQuotationTotalsFromPaise(
       quote.quotation.items.map((item, index) => ({
         ...(item.toObject?.() ?? item),
         unitPricePaise: item.unitPricePaise,
+        uom: item.uom || uomByProductId.get(String(quote.parts?.[index]?.productId)) || "",
         discountPercentage: discountPercentages?.[index] ??
           item.discountPercentage ??
           0,
@@ -252,7 +270,7 @@ const storeAttachment = async (req, file) => {
  * from MongoDB using the productId the frontend sent.
  *
  * Returns an array ready for request or finalized quotation totals:
- *   { name, itemCode, quantity, unitPrice (rupees from the catalogue) }
+ *   { name, itemCode, uom, quantity, unitPrice (rupees from the catalogue) }
  */
 const enrichPartsWithPrices = async (parts) => {
   // Collect distinct valid ObjectIds
@@ -271,7 +289,7 @@ const enrichPartsWithPrices = async (parts) => {
   const products = validIds.length
     ? await Product.find(
         { _id: { $in: validIds }, type: "sparepart" },
-        { _id: 1, name: 1, partCode: 1, price: 1 }
+        { _id: 1, name: 1, partCode: 1, price: 1, uom: 1 }
       ).lean()
     : [];
 
@@ -288,6 +306,7 @@ const enrichPartsWithPrices = async (parts) => {
       name:      product.name,
       itemCode:  product.partCode || part.itemCode || "",
       machine:   part.machine || "",
+      uom:       product.uom || "",
       quantity:  part.quantity,
       // Never accept pricing from the submitted form; catalogue prices are authoritative.
       unitPrice: product.price,

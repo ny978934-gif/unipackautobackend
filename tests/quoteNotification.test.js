@@ -348,6 +348,7 @@ test("generates a valid multi-page PDF with per-item discount and GST breakdown"
     name: `Part ${index + 1}`,
     itemCode: `P-${index + 1}`,
     quantity: 1,
+    uom: "Nos",
     unitPrice: 100,
   }));
   const totals = calculateQuotationTotals(items.map((item) => ({
@@ -361,7 +362,8 @@ test("generates a valid multi-page PDF with per-item discount and GST breakdown"
   assert.ok(pdf.subarray(0, 8).toString("ascii").startsWith("%PDF-1.4"));
   assert.ok(pageCount > 1);
   assert.equal(pdf.subarray(startXref, startXref + 4).toString("ascii"), "xref");
-  assert.match(content, /Subtotal after discounts/);
+  assert.match(content, /\(Total\)/);
+  assert.doesNotMatch(content, /Subtotal/);
   assert.match(content, /Rs 8,100\.00/);
   assert.match(content, /GST \\\(18%\\\)/);
   assert.match(content, /Rs 1,458\.00/);
@@ -369,8 +371,9 @@ test("generates a valid multi-page PDF with per-item discount and GST breakdown"
   assert.match(content, /10\.00%/);
   assert.match(content, /10\.00/);
   assert.match(content, /90\.00/);
-  assert.match(content, /FINAL AMOUNT INCLUDING GST/);
+  assert.match(content, /Final Amount/);
   assert.match(content, /Rs 9,558\.00/);
+  assert.match(content, /\(1 Nos\)/);
   assert.doesNotMatch(content, /TOTAL QUANTITY/);
   assert.match(content, /P-1/);
   assert.match(content, /Part 90/);

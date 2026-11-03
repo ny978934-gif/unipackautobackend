@@ -70,6 +70,7 @@ test("quotation snapshot and per-item discount amounts validate", () => {
         name: "Feed roller",
         itemCode: "FR-01",
         machine: "Strapping / UPA-100",
+        uom: "Rolls",
         quantity: 2,
         unitPricePaise: 250000,
         totalPaise: 500000,
@@ -87,6 +88,7 @@ test("quotation snapshot and per-item discount amounts validate", () => {
   assert.equal(request.validateSync(), undefined);
   assert.equal(request.quotation.items[0].unitPricePaise, 250000);
   assert.equal(request.quotation.items[0].discountPercentage, 10);
+  assert.equal(request.quotation.items[0].uom, "Rolls");
   assert.equal(request.quotation.items[0].netTotalPaise, 450000);
   assert.equal(request.quotation.finalTotalCents, 531000);
   request.quotation.items[0].discountPercentage = 101;

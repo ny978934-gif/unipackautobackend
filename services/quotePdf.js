@@ -207,7 +207,7 @@ const drawRow = (commands, item, index, y, rowHeight) => {
       item.machine ? `Machine: ${item.machine}` : "",
       item.itemCode ? `Code: ${item.itemCode}` : "",
     ].filter(Boolean).join("\n"),
-    quantity: String(item.quantity),
+    quantity: `${item.quantity}${item.uom ? ` ${item.uom}` : ""}`,
     unitPrice: moneyValue(item.unitPricePaise),
     discountPercentage: `${item.discountPercentage.toFixed(2)}%`,
     discountAmount: moneyValue(item.discountPaise),
@@ -237,7 +237,7 @@ const drawRow = (commands, item, index, y, rowHeight) => {
 
 const drawSummary = (commands, totals, y) => {
   const rows = [
-    { label: "Subtotal after discounts", amount: money(totals.subtotalPaise) },
+    { label: "Total", amount: money(totals.subtotalPaise) },
     { label: "GST (18%)", amount: money(totals.gstPaise) },
   ];
   let cursorY = y;
@@ -252,7 +252,7 @@ const drawSummary = (commands, totals, y) => {
     stroke: COLORS.yellow,
     lineWidth: 0.8,
   }));
-  commands.push(commandText("FINAL AMOUNT INCLUDING GST", 338, cursorY + 3, { font: "F2", size: 7.5 }));
+  commands.push(commandText("Final Amount", 338, cursorY + 3, { font: "F2", size: 7.5 }));
   commands.push(rightText(money(totals.finalTotalPaise), 552, cursorY + 3, { font: "F2", size: 8.5 }));
   return cursorY - 22;
 };
@@ -291,7 +291,7 @@ const itemRowHeight = (item) => {
       item.machine ? `Machine: ${item.machine}` : "",
       item.itemCode ? `Code: ${item.itemCode}` : "",
     ].filter(Boolean).join("\n"),
-    quantity: item.quantity,
+    quantity: `${item.quantity}${item.uom ? ` ${item.uom}` : ""}`,
     unitPrice: moneyValue(item.unitPricePaise),
     discountPercentage: `${item.discountPercentage.toFixed(2)}%`,
     discountAmount: moneyValue(item.discountPaise),

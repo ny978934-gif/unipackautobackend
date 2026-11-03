@@ -32,6 +32,7 @@ const quotationItemSchema = new mongoose.Schema(
     name: { type: String, required: true },
     itemCode: { type: String, default: "" },
     machine: { type: String, default: "" },
+    uom: { type: String, trim: true, default: "" },
     quantity: { type: Number, required: true },
     unitPricePaise: { type: Number, required: true, min: 0 },
     totalPaise: { type: Number, required: true, min: 0 },
