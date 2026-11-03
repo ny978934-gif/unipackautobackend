@@ -55,7 +55,7 @@ test("quote request schema validates spare part quantities and request status", 
   assert.ok(validationError.errors.status);
 });
 
-test("quotation snapshot and discount fields validate", () => {
+test("quotation snapshot and per-item discount amounts validate", () => {
   const request = new QuoteRequest({
     ...contact,
     quoteType: "sparePart",
@@ -72,19 +72,23 @@ test("quotation snapshot and discount fields validate", () => {
         machine: "Strapping / UPA-100",
         quantity: 2,
         unitPricePaise: 250000,
+        totalPaise: 500000,
+        discountPercentage: 10,
+        discountPaise: 50000,
+        netTotalPaise: 450000,
       }],
-      subtotalCents: 500000,
-      gstCents: 90000,
-      grossTotalCents: 590000,
-      discountType: "percentage",
-      discountValue: 10,
-      discountCents: 59000,
+      subtotalCents: 450000,
+      gstCents: 81000,
+      grossTotalCents: 531000,
       finalTotalCents: 531000,
     },
   });
 
   assert.equal(request.validateSync(), undefined);
   assert.equal(request.quotation.items[0].unitPricePaise, 250000);
-  assert.equal(request.quotation.discountType, "percentage");
+  assert.equal(request.quotation.items[0].discountPercentage, 10);
+  assert.equal(request.quotation.items[0].netTotalPaise, 450000);
   assert.equal(request.quotation.finalTotalCents, 531000);
+  request.quotation.items[0].discountPercentage = 101;
+  assert.ok(request.validateSync().errors["quotation.items.0.discountPercentage"]);
 });

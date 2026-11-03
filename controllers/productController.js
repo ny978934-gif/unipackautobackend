@@ -4,6 +4,10 @@ import "../models/Subcategory.js";
 import XLSX from "xlsx";
 import { deleteCloudinaryImages } from "../services/cloudinaryAssets.js";
 import { createSparePartsWorkbook } from "../services/sparePartsWorkbook.js";
+import {
+  addSparePartDuplicateKeys,
+  isSparePartDuplicate,
+} from "../services/sparePartIdentity.js";
 
 const slugify = (value) =>
   value
@@ -61,6 +65,21 @@ export const createProduct = async (req, res) => {
         : null;
     if (!category) {
       return res.status(400).json({ message: "Select a valid category for this product." });
+    }
+    if (type === "sparepart") {
+      const existingProducts = await Product.find({
+        type: "sparepart",
+        category: category._id,
+      }).select("name partCode").lean();
+      const existingKeys = new Set();
+      existingProducts.forEach((item) => addSparePartDuplicateKeys(item, existingKeys));
+      if (isSparePartDuplicate({ name }, existingKeys)) {
+        return res.status(409).json({
+          success: false,
+          duplicate: true,
+          message: "This spare part already exists in the selected category. The existing item was left unchanged.",
+        });
+      }
     }
     const priceValue = Number(price);
     if (!Number.isFinite(priceValue) || priceValue < 0) {

@@ -34,6 +34,10 @@ const quotationItemSchema = new mongoose.Schema(
     machine: { type: String, default: "" },
     quantity: { type: Number, required: true },
     unitPricePaise: { type: Number, required: true, min: 0 },
+    totalPaise: { type: Number, required: true, min: 0 },
+    discountPercentage: { type: Number, min: 0, max: 100, default: 0 },
+    discountPaise: { type: Number, required: true, min: 0 },
+    netTotalPaise: { type: Number, required: true, min: 0 },
   },
   { _id: false }
 );
@@ -72,9 +76,6 @@ const quoteRequestSchema = new mongoose.Schema(
       subtotalCents: { type: Number, min: 0, default: null },
       gstCents: { type: Number, min: 0, default: null },
       grossTotalCents: { type: Number, min: 0, default: null },
-      discountType: { type: String, enum: ["none", "percentage", "fixed"], default: "none" },
-      discountValue: { type: Number, min: 0, default: 0 },
-      discountCents: { type: Number, min: 0, default: 0 },
       finalTotalCents: { type: Number, min: 0, default: null },
     },
   },

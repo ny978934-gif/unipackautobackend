@@ -7,10 +7,15 @@ import XLSX from "xlsx";
 import Category from "../models/Category.js";
 import Product from "../models/Product.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
+import {
+  addSparePartDuplicateKeys,
+  getSparePartDuplicateKeys,
+  isSparePartDuplicate,
+} from "../services/sparePartIdentity.js";
 
 const router = express.Router();
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const MAX_IMPORT_ROWS = 1000;
+export const MAX_IMPORT_ROWS = 5000;
 const allowedMimeTypes = new Set([
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -34,6 +39,7 @@ const upload = multer({
 
 const headerAliases = {
   name: ["name", "partname", "sparepartname", "productname", "itemname"],
+  partCode: ["partcode", "itemcode", "code", "sku"],
   image: ["image", "spareimage", "imageurl", "photo", "photourl"],
   price: ["price", "mrp", "rate", "unitprice", "sellingprice"],
   uom: ["uom", "unit", "unitofmeasure", "unitmeasure", "measure"],
@@ -73,7 +79,7 @@ export const parseExcel = (buffer) => {
           if (value !== undefined && value !== null) record[field] = String(value).trim();
         }
         return record;
-      }).filter((record) => record.name);
+      }).filter((record) => Object.values(record).some(Boolean));
 
       return records.length
         ? [{ recognizedColumnCount: columns.size, records }]
@@ -177,24 +183,43 @@ router.post("/upload-parse", requireAdmin, upload.single("file"), async (req, re
       return res.status(413).json({ message: `An import may contain at most ${MAX_IMPORT_ROWS} spare parts.` });
     }
 
-    const existingSlugs = new Set(
-      (await Product.find({ type: "sparepart" }).select("slug").lean()).map((item) => item.slug)
-    );
+    const existingProducts = await Product.find({ type: "sparepart" })
+      .select("category name partCode slug")
+      .lean();
+    const existingSlugs = new Set(existingProducts.map((item) => item.slug));
+    const categoryDuplicateKeys = new Set();
+    existingProducts
+      .filter((item) => String(item.category) === String(category._id))
+      .forEach((item) => addSparePartDuplicateKeys(item, categoryDuplicateKeys));
     const timestamp = Date.now();
-    const productsToSave = parsedRecords.map((record, index) => {
+    const productsToSave = [];
+    const failedItems = [];
+    let duplicateCount = 0;
+    parsedRecords.forEach((record, index) => {
       const rowNumber = index + 2;
       const name = record.name?.trim();
       if (!name) {
-        const error = new Error(`Row ${rowNumber}: part name is required.`);
-        error.status = 422;
-        throw error;
+        failedItems.push({ row: rowNumber, name: "", reason: "Part name is required." });
+        return;
+      }
+      if (name.length > 150) {
+        failedItems.push({ row: rowNumber, name, reason: "Part name must be 150 characters or fewer." });
+        return;
       }
       const priceText = (record.price || "").replace(/[₹$€£,\s]/g, "");
       const price = priceText ? Number(priceText) : 0;
       if (!Number.isFinite(price) || price < 0) {
-        const error = new Error(`Row ${rowNumber}: price must be a non-negative number.`);
-        error.status = 422;
-        throw error;
+        failedItems.push({ row: rowNumber, name, reason: "Price must be a non-negative number." });
+        return;
+      }
+      const partCode = record.partCode?.trim() || "";
+      if (partCode.length > 100) {
+        failedItems.push({ row: rowNumber, name, reason: "Part code must be 100 characters or fewer." });
+        return;
+      }
+      if (isSparePartDuplicate({ name, partCode }, categoryDuplicateKeys)) {
+        duplicateCount += 1;
+        return;
       }
       const baseSlug = slugify(name);
       let slug = baseSlug;
@@ -203,26 +228,39 @@ router.post("/upload-parse", requireAdmin, upload.single("file"), async (req, re
         slug = `${baseSlug}-${timestamp}-${suffix++}`;
       }
       existingSlugs.add(slug);
+      addSparePartDuplicateKeys({ name, partCode }, categoryDuplicateKeys);
 
-      return {
+      productsToSave.push({
         type: "sparepart",
         category: category._id,
         name,
         slug,
+        partCode,
         image: record.image?.trim() || "",
         images: record.image?.trim() ? [record.image.trim()] : [],
         price,
         uom: record.uom?.trim() || "",
-      };
+      });
     });
 
-    const inserted = await Product.insertMany(productsToSave);
+    const inserted = productsToSave.length
+      ? await Product.insertMany(productsToSave, { ordered: false })
+      : [];
     const products = await Product.find({ _id: { $in: inserted.map((item) => item._id) } })
-      .populate("category")
+      .select("_id type name image images price uom")
+      .populate("category", "name slug")
       .sort({ createdAt: -1 });
+    const counts = {
+      imported: products.length,
+      duplicate: duplicateCount,
+      failed: failedItems.length,
+      total: parsedRecords.length,
+    };
     return res.status(201).json({
       success: true,
-      message: `Imported ${products.length} spare part${products.length === 1 ? "" : "s"}.`,
+      message: `Imported ${counts.imported}; skipped ${counts.duplicate} duplicate${counts.duplicate === 1 ? "" : "s"}; failed ${counts.failed}.`,
+      counts,
+      failedItems: failedItems.slice(0, 50),
       products,
       category: { _id: category._id, name: category.name, slug: category.slug },
     });

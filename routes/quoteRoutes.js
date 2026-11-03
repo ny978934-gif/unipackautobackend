@@ -94,32 +94,34 @@ const applyQuotationTotals = (quote, totals, quotationNumber, issuedAt) => {
     machine: item.machine || "",
     quantity: item.quantity,
     unitPricePaise: item.unitPricePaise,
+    totalPaise: item.totalPaise,
+    discountPercentage: item.discountPercentage,
+    discountPaise: item.discountPaise,
+    netTotalPaise: item.netTotalPaise,
   }));
   quote.quotation.subtotalCents = totals.subtotalPaise;
   quote.quotation.gstCents = totals.gstPaise;
   quote.quotation.grossTotalCents = totals.grandTotalPaise;
-  quote.quotation.discountType = totals.discountType;
-  quote.quotation.discountValue = totals.discountValue;
-  quote.quotation.discountCents = totals.discountPaise;
   quote.quotation.finalTotalCents = totals.finalTotalPaise;
 };
 
-const getQuotationTotals = async (quote) => {
-  const discount = {
-    type: quote.quotation?.discountType || "none",
-    value: quote.quotation?.discountValue || 0,
-  };
+const getQuotationTotals = async (quote, discountPercentages) => {
   if (quote.quotation?.items?.length) {
     return calculateQuotationTotalsFromPaise(
-      quote.quotation.items.map((item) => ({
+      quote.quotation.items.map((item, index) => ({
         ...(item.toObject?.() ?? item),
         unitPricePaise: item.unitPricePaise,
-      })),
-      discount
+        discountPercentage: discountPercentages?.[index] ??
+          item.discountPercentage ??
+          0,
+      }))
     );
   }
   const pricedItems = await enrichPartsWithPrices(quote.parts || []);
-  return calculateQuotationTotals(pricedItems, discount);
+  return calculateQuotationTotals(pricedItems.map((item, index) => ({
+    ...item,
+    discountPercentage: discountPercentages?.[index] ?? 0,
+  })));
 };
 
 const sendFinalizedQuotation = async (quote, totals, { issuedAt }) => {
@@ -373,49 +375,45 @@ router.get("/:id/pdf", requireAdmin, async (req, res) => {
   }
 });
 
-router.patch("/:id/discount", requireAdmin, async (req, res) => {
-  const discountType = req.body?.discountType;
-  const discountValue = Number(req.body?.discountValue);
-  if (!["none", "percentage", "fixed"].includes(discountType)) {
-    return res.status(400).json({ message: "Choose no discount, percentage, or fixed amount." });
-  }
-  if (!Number.isFinite(discountValue) || discountValue < 0) {
-    return res.status(400).json({ message: "Enter a valid non-negative discount." });
-  }
-  if ((discountType === "none" && discountValue !== 0) ||
-      (discountType === "percentage" && discountValue > 100)) {
-    return res.status(400).json({ message: "Discount percentage must be from 0 to 100; no discount must be zero." });
-  }
-
+router.patch("/:id/quotation", requireAdmin, async (req, res) => {
   try {
     const quote = await QuoteRequest.findById(req.params.id);
     if (!quote || quote.quoteType !== "sparePart") {
       return res.status(404).json({ message: "Spare-part quote request not found." });
     }
+    const discountPercentages = req.body?.discountPercentages;
+    if (!Array.isArray(discountPercentages) || discountPercentages.length !== quote.parts.length) {
+      return res.status(400).json({ message: "Provide a discount percentage for every spare part." });
+    }
+    if (discountPercentages.some((value) =>
+      typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100
+    )) {
+      return res.status(400).json({ message: "Each item discount must be a percentage from 0 to 100." });
+    }
     const wasFinalized = Boolean(quote.quotation?.sentAt);
-    const discountIsUnchanged = quote.quotation?.discountType === discountType &&
-      Number(quote.quotation?.discountValue || 0) === discountValue;
-    if (wasFinalized && quote.notificationStatus === "sent" && discountIsUnchanged) {
+    const discountsAreUnchanged = quote.quotation?.items?.length === discountPercentages.length &&
+      quote.quotation.items.every((item, index) =>
+        Number(item.discountPercentage || 0) === discountPercentages[index]
+      );
+    if (wasFinalized && quote.notificationStatus === "sent" && discountsAreUnchanged) {
       return res.json({
-        message: "This quotation has already been emailed with the current discount.",
+        message: "This quotation has already been emailed with these item discounts.",
         notificationSent: true,
         alreadySent: true,
         request: quote,
       });
     }
-    quote.quotation.discountType = discountType;
-    quote.quotation.discountValue = discountValue;
-    const totals = await getQuotationTotals(quote);
+    const totals = await getQuotationTotals(quote, discountPercentages);
     const delivery = await sendFinalizedQuotation(quote, totals, {
       issuedAt: new Date(),
     });
     return res.json({
       message: delivery.notificationSent
         ? wasFinalized
-          ? "Discount saved and revised quotation emailed to the owner and customer."
+          ? "Item discounts saved and revised quotation emailed to the owner and customer."
           : "Quotation finalized and emailed to the owner and customer."
         : wasFinalized
-          ? "Discount saved, but the revised quotation email could not be delivered to both recipients."
+          ? "Item discounts saved, but the revised quotation email could not be delivered to both recipients."
           : "Quotation finalized, but the email could not be delivered to both recipients.",
       notificationSent: delivery.notificationSent,
       notificationError: delivery.notificationError || "",
@@ -424,8 +422,8 @@ router.patch("/:id/discount", requireAdmin, async (req, res) => {
   } catch (error) {
     if (error.name === "CastError") return res.status(404).json({ message: "Quote request not found." });
     if (error.status) return res.status(error.status).json({ message: error.message });
-    console.error("Failed to apply quotation discount:", error);
-    return res.status(500).json({ message: "Could not apply the quotation discount." });
+    console.error("Failed to save quotation:", error);
+    return res.status(500).json({ message: "Could not save the quotation." });
   }
 });
 

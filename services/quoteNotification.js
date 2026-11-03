@@ -15,20 +15,6 @@ export const formatINR = (amountInPaise) => {
   return `\u20B9${INR.format(rupees)}.${paiseStr}`;
 };
 
-export const getDiscountPercentage = (totals) => {
-  if (totals.discountType === "percentage") {
-    return Math.round(Number(totals.discountValue) * 100) / 100;
-  }
-  if (!totals.grandTotalPaise) return 0;
-  return Number(
-    (BigInt(totals.discountPaise) * 10000n + BigInt(totals.grandTotalPaise) / 2n) /
-      BigInt(totals.grandTotalPaise)
-  ) / 100;
-};
-
-export const formatDiscountPercentage = (totals) =>
-  `${getDiscountPercentage(totals).toFixed(2)}%`;
-
 /** Convert a JS float price (rupees) to integer paise without float drift */
 const toPaise = (value) => {
   const [mantissa = "", expText = "0"] = String(value).toLowerCase().split("e");
@@ -49,10 +35,10 @@ const toPaise = (value) => {
 // ── Price calculation ─────────────────────────────────────────────────────────
 
 /**
- * items  – array of { name, itemCode, quantity, unitPrice (rupees float) }
+ * items  – array of { name, itemCode, quantity, unitPrice, discountPercentage }
  * Returns item and aggregate amounts as integer paise.
  */
-export const calculateQuotationTotalsFromPaise = (items, discount = {}) => {
+export const calculateQuotationTotalsFromPaise = (items) => {
   if (!Array.isArray(items) || items.length === 0) {
     throw Object.assign(
       new Error("A quotation must include at least one spare part."),
@@ -87,7 +73,21 @@ export const calculateQuotationTotalsFromPaise = (items, discount = {}) => {
       );
     }
 
-    subtotalPaise += totalPaise;
+    const discountPercentage = item.discountPercentage === undefined
+      ? 0
+      : Number(item.discountPercentage);
+    if (!Number.isFinite(discountPercentage) || discountPercentage < 0 || discountPercentage > 100) {
+      throw Object.assign(
+        new Error(`Part ${i + 1}: discount percentage must be from 0 to 100.`),
+        { status: 400 }
+      );
+    }
+    const discountBasisPoints = Math.round(discountPercentage * 100);
+    const discountPaise = Number(
+      (BigInt(totalPaise) * BigInt(discountBasisPoints) + 5000n) / 10000n
+    );
+    const netTotalPaise = totalPaise - discountPaise;
+    subtotalPaise += netTotalPaise;
     if (!Number.isSafeInteger(subtotalPaise)) {
       throw Object.assign(
         new Error("Quotation subtotal exceeds the supported limit."),
@@ -95,10 +95,17 @@ export const calculateQuotationTotalsFromPaise = (items, discount = {}) => {
       );
     }
 
-    return { ...item, unitPricePaise, totalPaise };
+    return {
+      ...item,
+      unitPricePaise,
+      totalPaise,
+      discountPercentage: discountBasisPoints / 100,
+      discountPaise,
+      netTotalPaise,
+    };
   });
 
-  // GST 18 % — round half-up using integer arithmetic
+  // GST 18% is calculated on the subtotal after each item's discount.
   const gstPaise = Number((BigInt(subtotalPaise) * 18n + 50n) / 100n);
   const grandTotalPaise = subtotalPaise + gstPaise;
 
@@ -109,51 +116,20 @@ export const calculateQuotationTotalsFromPaise = (items, discount = {}) => {
     );
   }
 
-  const discountType = discount.type || "none";
-  const discountValue = discount.value === undefined ? 0 : Number(discount.value);
-  if (!["none", "percentage", "fixed"].includes(discountType)) {
-    throw Object.assign(new Error("Choose a percentage or fixed-amount discount."), { status: 400 });
-  }
-  if (!Number.isFinite(discountValue) || discountValue < 0) {
-    throw Object.assign(new Error("Discount must be a non-negative number."), { status: 400 });
-  }
-  if (discountType === "percentage" && discountValue > 100) {
-    throw Object.assign(new Error("Percentage discount cannot exceed 100%."), { status: 400 });
-  }
-  if (discountType === "none" && discountValue !== 0) {
-    throw Object.assign(new Error("A no-discount quotation must have a discount value of zero."), { status: 400 });
-  }
-
-  const discountValuePaise = discountType === "fixed" ? toPaise(discountValue) : 0;
-  const discountPaise = discountType === "percentage"
-    ? Number((BigInt(grandTotalPaise) * BigInt(Math.round(discountValue * 100)) + 5000n) / 10000n)
-    : discountType === "fixed"
-      ? discountValuePaise
-      : 0;
-  if (!Number.isSafeInteger(discountPaise) || discountPaise > grandTotalPaise) {
-    throw Object.assign(new Error("Discount cannot exceed the total including GST."), { status: 400 });
-  }
-  const finalTotalPaise = grandTotalPaise - discountPaise;
-
   return {
     items: priced,
     subtotalPaise,
     gstPaise,
     grandTotalPaise,
-    discountType,
-    discountValue,
-    discountValuePaise,
-    discountPaise,
-    finalTotalPaise,
+    finalTotalPaise: grandTotalPaise,
   };
 };
 
-export const calculateQuotationTotals = (items, discount = {}) =>
+export const calculateQuotationTotals = (items) =>
   calculateQuotationTotalsFromPaise(
     Array.isArray(items)
       ? items.map((item) => ({ ...item, unitPricePaise: toPaise(item.unitPrice) }))
-      : items,
-    discount
+      : items
   );
 
 // ── HTML helpers ──────────────────────────────────────────────────────────────
@@ -176,13 +152,16 @@ const buildItemisedTable = (totals) => {
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" valign="top" style="${COL_STYLE}color:#50576a;">${esc(item.itemCode || "—")}</td>
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}">${esc(item.quantity)}</td>
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">${formatINR(item.unitPricePaise)}</td>
-        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;font-weight:bold;">${formatINR(item.totalPaise)}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">${formatINR(item.totalPaise)}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">${item.discountPercentage.toFixed(2)}%</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">-${formatINR(item.discountPaise)}</td>
+        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;font-weight:bold;">${formatINR(item.netTotalPaise)}</td>
       </tr>`)
     .join("");
 
   const summaryRow = (label, value) => `
     <tr>
-      <td colspan="6" align="right" style="padding:9px 10px;font-size:13px;color:#687185;border-top:1px solid #eee6f0;">${esc(label)}</td>
+      <td colspan="9" align="right" style="padding:9px 10px;font-size:13px;color:#687185;border-top:1px solid #eee6f0;">${esc(label)}</td>
       <td align="right" style="padding:9px 10px;white-space:nowrap;font-size:13px;color:#243047;border-top:1px solid #eee6f0;">${value}</td>
     </tr>`;
 
@@ -190,23 +169,24 @@ const buildItemisedTable = (totals) => {
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:20px 0;border-collapse:collapse;border:1px solid #ede8f0;">
     <thead>
       <tr>
-        <th width="7%"  align="center" bgcolor="#f7f2f8" style="${HEAD_STYLE}">S. No.</th>
-        <th width="29%" align="left"   bgcolor="#f7f2f8" style="${HEAD_STYLE}">Spare Part Description</th>
-        <th width="20%" align="left"   bgcolor="#f7f2f8" style="${HEAD_STYLE}">Machine / Application</th>
-        <th width="10%" align="left"   bgcolor="#f7f2f8" style="${HEAD_STYLE}">Item Code</th>
-        <th width="8%"  align="right"  bgcolor="#f7f2f8" style="${HEAD_STYLE}">Qty</th>
-        <th width="13%" align="right"  bgcolor="#f7f2f8" style="${HEAD_STYLE}">Unit Price (₹)</th>
-        <th width="13%" align="right"  bgcolor="#f7f2f8" style="${HEAD_STYLE}">Total (₹)</th>
+        <th width="4%" align="center" bgcolor="#f7f2f8" style="${HEAD_STYLE}">No.</th>
+        <th width="20%" align="left" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Spare Part Description</th>
+        <th width="14%" align="left" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Machine / Application</th>
+        <th width="8%" align="left" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Item Code</th>
+        <th width="6%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Qty</th>
+        <th width="9%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Unit Price</th>
+        <th width="9%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Line Total</th>
+        <th width="7%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Discount (%)</th>
+        <th width="10%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Discount Amount (₹)</th>
+        <th width="13%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Net Price (₹)</th>
       </tr>
     </thead>
     <tbody>
       ${rows}
-      ${summaryRow("Net Total", formatINR(totals.subtotalPaise))}
+      ${summaryRow("Subtotal after item discounts", formatINR(totals.subtotalPaise))}
       ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
-      ${summaryRow("Gross Total", formatINR(totals.grandTotalPaise))}
-      ${summaryRow(`Discount (${formatDiscountPercentage(totals)})`, `-${formatINR(totals.discountPaise)}`)}
       <tr>
-        <td colspan="6" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Final Payable Amount</td>
+        <td colspan="9" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Final Amount Including GST</td>
         <td align="right" bgcolor="#faf5fb" style="padding:14px 10px;white-space:nowrap;font-weight:bold;font-size:17px;border-top:2px solid #66116f;color:#66116f;">${formatINR(totals.finalTotalPaise)}</td>
       </tr>
     </tbody>
@@ -231,15 +211,17 @@ export const createQuotationNumber = (requestId, date = new Date()) => {
   return `UPK/Spare/Quote/${monthYear}/${String(requestId).slice(-10)}`;
 };
 
-const commercialTerms = [
-  "GST: 18% Extra or as actual as per Govt. Norms .",
+export const commercialTerms = [
+  "GST: 18% included in the quoted total.",
   "Freight Charges: Extra, as applicable.",
   "Payment Terms: 100% advance payment against the proforma invoice.",
   "Dispatch: The spare parts will be dispatched after receipt of payment confirmation.",
   "Technical Support: Our technical team will contact you, if required, to discuss your requirements and provide further assistance.",
+  "Validity: This quotation is valid for 30 days from the quotation date.",
+  "This quotation is based on the specifications and quantities listed above.",
 ];
 
-const bankDetails = [
+export const bankDetails = [
   ["Account Holder's Name", "UNIPACKAUTO INDIA PRIVATE LIMITED"],
   ["Bank Name", "ICICI Bank"],
   ["Current Account No.", "174405500608"],
@@ -268,16 +250,13 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
     "Please find below our offer for the required spare parts:",
     "",
     "Spare Part Quotation",
-    "S. No. | Spare Part Description | Machine/Application | Item Code | Quantity | Unit Price (₹) | Total (₹)",
+    "S. No. | Spare Part Description | Machine/Application | Item Code | Quantity | Unit Price (₹) | Line Total (₹) | Discount (%) | Discount Amount (₹) | Net Price (₹)",
     ...totals.items.map((item, index) =>
-      `${index + 1} | ${item.name} | ${item.machine || "—"} | ${item.itemCode || "—"} | ${item.quantity} | ${formatINR(item.unitPricePaise)} | ${formatINR(item.totalPaise)}`
+      `${index + 1} | ${item.name} | ${item.machine || "—"} | ${item.itemCode || "—"} | ${item.quantity} | ${formatINR(item.unitPricePaise)} | ${formatINR(item.totalPaise)} | ${item.discountPercentage.toFixed(2)}% | -${formatINR(item.discountPaise)} | ${formatINR(item.netTotalPaise)}`
     ),
-    `Net Total: ${formatINR(totals.subtotalPaise)}`,
+    `Subtotal after item discounts: ${formatINR(totals.subtotalPaise)}`,
     `GST @ 18%: ${formatINR(totals.gstPaise)}`,
-    `Gross Total: ${formatINR(totals.grandTotalPaise)}`,
-    `Discount (${formatDiscountPercentage(totals)}): -${formatINR(totals.discountPaise)}`,
-    `Final Payable Amount: ${formatINR(totals.finalTotalPaise)}`,
-    "Discount is applied after GST.",
+    `Final Amount Including GST: ${formatINR(totals.finalTotalPaise)}`,
     "",
     "Commercial Terms & Conditions:",
     ...commercialTerms.map((term, index) => `${index + 1}. ${term}`),
@@ -374,7 +353,6 @@ export const buildSparePartsQuotationEmail = (quote, totals, quotationNumber, is
         <p style="margin:0 0 22px;font-size:14px;line-height:22px;color:#243047;">Please find below our offer for the required spare parts.</p>
         <h2 style="margin:0 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:18px;">Spare Part Quotation</h2>
         ${buildItemisedTable(totals)}
-        <p style="margin:12px 0;font-size:12px;color:#687185;">Discount is applied after GST.</p>
         <h2 style="margin:28px 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:17px;">Commercial Terms &amp; Conditions</h2>
         <ol style="margin:0;padding-left:22px;font-size:13px;line-height:20px;color:#243047;">${termsHtml}</ol>
         <h2 style="margin:28px 0 12px;padding-bottom:9px;border-bottom:2px solid #eee6f0;color:#41104f;font-size:17px;">Bank Details for Payment</h2>
@@ -615,7 +593,7 @@ export const buildQuoteRequestOwnerEmail = (quote, totals) => {
     `Net Total: ${formatINR(totals.subtotalPaise)}`,
     `GST @ 18%: ${formatINR(totals.gstPaise)}`,
     `Estimated gross total including GST: ${formatINR(totals.grandTotalPaise)}`,
-    "Estimate only; the final quotation and any discount will be confirmed by an admin.",
+    "Estimate only; the final quotation and item-wise discounts will be confirmed by an admin.",
     "",
     "Commercial guidelines:",
     ...commercialTerms.map((term, index) => `${index + 1}. ${term}`),
@@ -636,7 +614,7 @@ export const buildQuoteRequestOwnerEmail = (quote, totals) => {
     const separator = term.indexOf(":");
     return `<li><strong>${esc(term.slice(0, separator + 1))}</strong>${esc(term.slice(separator + 1))}</li>`;
   }).join("");
-  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:900px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">New spare parts quotation request</td></tr><tr><td style="padding:28px;line-height:1.6;"><p><strong>Request ID:</strong> ${esc(requestId)}</p><p><strong>Company:</strong> ${esc(quote.company)}<br><strong>Contact:</strong> ${esc(quote.contactName)}<br><strong>Email:</strong> ${esc(quote.email)}<br><strong>Phone:</strong> ${esc(quote.phone)}<br><strong>Location:</strong> ${esc(quote.city)}, ${esc(quote.state)}</p><h2 style="font-size:17px;">Requested spare parts and catalogue pricing</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><thead><tr><th style="${HEAD_STYLE}">#</th><th style="${HEAD_STYLE}">Spare part</th><th style="${HEAD_STYLE}">Machine / application</th><th style="${HEAD_STYLE}">Item code</th><th style="${HEAD_STYLE}">Quantity</th><th style="${HEAD_STYLE}">Unit price</th><th style="${HEAD_STYLE}">Line total</th></tr></thead><tbody>${partRows}</tbody><tfoot><tr><td colspan="6" align="right" style="${COL_STYLE}">Net Total</td><td align="right" style="${COL_STYLE}">${formatINR(totals.subtotalPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}">GST @ 18%</td><td align="right" style="${COL_STYLE}">${formatINR(totals.gstPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}font-weight:bold;">Estimated Gross Total</td><td align="right" style="${COL_STYLE}font-weight:bold;">${formatINR(totals.grandTotalPaise)}</td></tr></tfoot></table><p style="font-size:12px;color:#687185;">Estimate only; the final quotation and any discount will be confirmed by an admin.</p><h2 style="font-size:17px;">Commercial guidelines</h2><ol>${termsHtml}</ol>${quote.message ? `<p><strong>Customer message:</strong><br>${esc(quote.message)}</p>` : ""}${quote.attachment?.url ? `<p><strong>Customer attachment:</strong> <a href="${esc(quote.attachment.url)}">${esc(quote.attachment.name || "View attachment")}</a></p>` : ""}</td></tr></table></body></html>`;
+  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:24px;background:#f4f3f5;font-family:Arial,Helvetica,sans-serif;color:#243047;"><table role="presentation" style="max-width:900px;margin:auto;background:#fff;border:1px solid #e8e4eb;border-radius:8px;" cellspacing="0" cellpadding="0" width="100%"><tr><td style="padding:24px 28px;background:#66116f;color:#fff;font-size:20px;font-weight:bold;">New spare parts quotation request</td></tr><tr><td style="padding:28px;line-height:1.6;"><p><strong>Request ID:</strong> ${esc(requestId)}</p><p><strong>Company:</strong> ${esc(quote.company)}<br><strong>Contact:</strong> ${esc(quote.contactName)}<br><strong>Email:</strong> ${esc(quote.email)}<br><strong>Phone:</strong> ${esc(quote.phone)}<br><strong>Location:</strong> ${esc(quote.city)}, ${esc(quote.state)}</p><h2 style="font-size:17px;">Requested spare parts and catalogue pricing</h2><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><thead><tr><th style="${HEAD_STYLE}">#</th><th style="${HEAD_STYLE}">Spare part</th><th style="${HEAD_STYLE}">Machine / application</th><th style="${HEAD_STYLE}">Item code</th><th style="${HEAD_STYLE}">Quantity</th><th style="${HEAD_STYLE}">Unit price</th><th style="${HEAD_STYLE}">Line total</th></tr></thead><tbody>${partRows}</tbody><tfoot><tr><td colspan="6" align="right" style="${COL_STYLE}">Net Total</td><td align="right" style="${COL_STYLE}">${formatINR(totals.subtotalPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}">GST @ 18%</td><td align="right" style="${COL_STYLE}">${formatINR(totals.gstPaise)}</td></tr><tr><td colspan="6" align="right" style="${COL_STYLE}font-weight:bold;">Estimated Gross Total</td><td align="right" style="${COL_STYLE}font-weight:bold;">${formatINR(totals.grandTotalPaise)}</td></tr></tfoot></table><p style="font-size:12px;color:#687185;">Estimate only; the final quotation and item-wise discounts will be confirmed by an admin.</p><h2 style="font-size:17px;">Commercial guidelines</h2><ol>${termsHtml}</ol>${quote.message ? `<p><strong>Customer message:</strong><br>${esc(quote.message)}</p>` : ""}${quote.attachment?.url ? `<p><strong>Customer attachment:</strong> <a href="${esc(quote.attachment.url)}">${esc(quote.attachment.name || "View attachment")}</a></p>` : ""}</td></tr></table></body></html>`;
   return {
     subject: `New spare parts quotation request - ${requestId}`,
     text,
