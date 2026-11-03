@@ -238,8 +238,20 @@ const drawRow = (commands, item, index, y, rowHeight) => {
 
 const drawSummary = (commands, totals, y) => {
   const totalQuantity = totals.items.reduce((sum, item) => sum + item.quantity, 0);
-  commands.push(commandText("Total Quantity", PAGE_MARGIN + 4, y - 12, { font: "F2", size: 7.2 }));
-  commands.push(rightText(String(totalQuantity), PAGE_WIDTH - PAGE_MARGIN - 4, y - 12, { font: "F2", size: 7.2 }));
+  const quantityColumn = columns.find((column) => column.key === "quantity");
+  const totalQuantityLabel = "Total Quantity";
+  commands.push(commandText(
+    totalQuantityLabel,
+    quantityColumn.x - 4 - estimateTextWidth(totalQuantityLabel, 7.2),
+    y - 12,
+    { font: "F2", size: 7.2 }
+  ));
+  commands.push(commandText(
+    String(totalQuantity),
+    quantityColumn.x + (quantityColumn.width - estimateTextWidth(String(totalQuantity), 7.2)) / 2,
+    y - 12,
+    { font: "F2", size: 7.2 }
+  ));
   commands.push(commandLine(PAGE_MARGIN, y - 22, PAGE_WIDTH - PAGE_MARGIN, y - 22, COLORS.line, 0.5));
 
   const rows = [
