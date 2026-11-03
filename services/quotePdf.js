@@ -130,6 +130,11 @@ const drawHeader = (commands, quote, logoDimensions) => {
   commands.push(commandText("HR: 06AACCU9248D1ZA", 330, 782, { size: 7.2 }));
   commands.push(commandText("CIN: U29268HR2021PTC097744", 330, 769, { size: 7.2 }));
   commands.push(commandLine(PAGE_MARGIN, 746, PAGE_WIDTH - PAGE_MARGIN, 746, COLORS.yellow, 2));
+  commands.push(commandText("UNIPACKAUTO INDIA PRIVATE LIMITED", 226, 737, {
+    font: "F2",
+    size: 8,
+    color: COLORS.purple,
+  }));
   commands.push(commandText("SPARE PARTS QUOTATION", PAGE_MARGIN, 727, { font: "F2", size: 13, color: COLORS.purple }));
   commands.push(rightText(`Quotation No.: ${quote.quotation?.number || "Pending"}`, PAGE_WIDTH - PAGE_MARGIN, 727, { font: "F2", size: 7.2 }));
   commands.push(rightText(`Date: ${formatDate(quote.quotation?.sentAt || new Date())}`, PAGE_WIDTH - PAGE_MARGIN, 714, { size: 7 }));

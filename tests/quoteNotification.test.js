@@ -345,12 +345,19 @@ test("final quotation email includes item discounts and the GST-inclusive total"
   );
 
   assert.match(email.text, /Discount Amount \(₹\)/);
-  assert.match(email.text, /10\.00% \| -₹20\.00 \| ₹180\.00/);
+  assert.match(email.text, /₹200\.00 \| 10\.00% \| -₹20\.00 \| ₹180\.00/);
   assert.match(email.text, /Subtotal after item discounts: ₹180\.00/);
   assert.match(email.text, /GST @ 18%: ₹32\.40/);
   assert.match(email.text, /Final Amount Including GST: ₹212\.40/);
   assert.match(email.html, /Discount Amount \(₹\)/);
   assert.match(email.html, /Final Amount Including GST/);
+  assert.doesNotMatch(email.text, /Line Total/);
+  assert.doesNotMatch(email.html, /Line Total/);
+  assert.match(email.html, /₹200\.00/);
+  assert.match(email.html, /₹20\.00/);
+  assert.match(email.html, /₹180\.00/);
+  assert.match(email.html, /₹32\.40/);
+  assert.match(email.html, /₹212\.40/);
   assert.doesNotMatch(email.text, /View or download|quotation PDF/i);
   assert.doesNotMatch(email.html, /View or download|quotation PDF/i);
   assert.equal("attachments" in email, false);
@@ -425,6 +432,7 @@ test("generates a valid multi-page PDF with per-item discount and GST breakdown"
   assert.match(content, /Part 90/);
   assert.match(content, /100\.00/);
   assert.match(content, /SPARE PARTS QUOTATION/);
+  assert.equal(content.split("(UNIPACKAUTO INDIA PRIVATE LIMITED)").length - 1, pageCount);
   assert.match(content, /S\.No\./);
   assert.match(content, /Item Name/);
   assert.match(content, /Unit Price/);
@@ -543,7 +551,6 @@ test("builds the branded spare-parts quotation email with request details and su
     "Machine / Application",
     "Subtotal after item discounts",
     "GST @ 18%",
-    "Line Total",
     "Discount (%)",
     "Discount Amount",
     "Net Price",
@@ -564,6 +571,8 @@ test("builds the branded spare-parts quotation email with request details and su
   }
   assert.doesNotMatch(email.html, /View or download quotation PDF/);
   assert.doesNotMatch(email.text, /View or download your quotation PDF/);
+  assert.doesNotMatch(email.html, /Line Total/);
+  assert.doesNotMatch(email.text, /Line Total/);
   assert.equal("attachments" in email, false);
   assert.ok(
     email.html.indexOf("Company Name") < email.html.indexOf("Dear Sir/Madam,"),

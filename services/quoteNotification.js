@@ -152,7 +152,6 @@ const buildItemisedTable = (totals) => {
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" valign="top" style="${COL_STYLE}color:#50576a;">${esc(item.itemCode || "—")}</td>
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}">${esc(item.quantity)}</td>
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">${formatINR(item.unitPricePaise)}</td>
-        <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">${formatINR(item.totalPaise)}</td>
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">${item.discountPercentage.toFixed(2)}%</td>
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;">-${formatINR(item.discountPaise)}</td>
         <td bgcolor="${i % 2 ? "#fcfafd" : "#ffffff"}" align="right" valign="top" style="${COL_STYLE}white-space:nowrap;font-weight:bold;">${formatINR(item.netTotalPaise)}</td>
@@ -161,7 +160,7 @@ const buildItemisedTable = (totals) => {
 
   const summaryRow = (label, value) => `
     <tr>
-      <td colspan="9" align="right" style="padding:9px 10px;font-size:13px;color:#687185;border-top:1px solid #eee6f0;">${esc(label)}</td>
+      <td colspan="8" align="right" style="padding:9px 10px;font-size:13px;color:#687185;border-top:1px solid #eee6f0;">${esc(label)}</td>
       <td align="right" style="padding:9px 10px;white-space:nowrap;font-size:13px;color:#243047;border-top:1px solid #eee6f0;">${value}</td>
     </tr>`;
 
@@ -170,15 +169,14 @@ const buildItemisedTable = (totals) => {
     <thead>
       <tr>
         <th width="4%" align="center" bgcolor="#f7f2f8" style="${HEAD_STYLE}">No.</th>
-        <th width="20%" align="left" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Spare Part Description</th>
+        <th width="22%" align="left" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Spare Part Description</th>
         <th width="14%" align="left" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Machine / Application</th>
         <th width="8%" align="left" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Item Code</th>
         <th width="6%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Qty</th>
-        <th width="9%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Unit Price</th>
-        <th width="9%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Line Total</th>
-        <th width="7%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Discount (%)</th>
-        <th width="10%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Discount Amount (₹)</th>
-        <th width="13%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Net Price (₹)</th>
+        <th width="11%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Unit Price</th>
+        <th width="8%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Discount (%)</th>
+        <th width="12%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Discount Amount (₹)</th>
+        <th width="15%" align="right" bgcolor="#f7f2f8" style="${HEAD_STYLE}">Net Price (₹)</th>
       </tr>
     </thead>
     <tbody>
@@ -186,7 +184,7 @@ const buildItemisedTable = (totals) => {
       ${summaryRow("Subtotal after item discounts", formatINR(totals.subtotalPaise))}
       ${summaryRow("GST @ 18%", formatINR(totals.gstPaise))}
       <tr>
-        <td colspan="9" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Final Amount Including GST</td>
+        <td colspan="8" align="right" bgcolor="#faf5fb" style="padding:14px 10px;font-weight:bold;font-size:14px;border-top:2px solid #66116f;color:#66116f;">Final Amount Including GST</td>
         <td align="right" bgcolor="#faf5fb" style="padding:14px 10px;white-space:nowrap;font-weight:bold;font-size:17px;border-top:2px solid #66116f;color:#66116f;">${formatINR(totals.finalTotalPaise)}</td>
       </tr>
     </tbody>
@@ -256,9 +254,9 @@ export const buildSparePartsQuotationEmail = (
     "Please find below our offer for the required spare parts:",
     "",
     "Spare Part Quotation",
-    "S. No. | Spare Part Description | Machine/Application | Item Code | Quantity | Unit Price (₹) | Line Total (₹) | Discount (%) | Discount Amount (₹) | Net Price (₹)",
+    "S. No. | Spare Part Description | Machine/Application | Item Code | Quantity | Unit Price (₹) | Discount (%) | Discount Amount (₹) | Net Price (₹)",
     ...totals.items.map((item, index) =>
-      `${index + 1} | ${item.name} | ${item.machine || "—"} | ${item.itemCode || "—"} | ${item.quantity} | ${formatINR(item.unitPricePaise)} | ${formatINR(item.totalPaise)} | ${item.discountPercentage.toFixed(2)}% | -${formatINR(item.discountPaise)} | ${formatINR(item.netTotalPaise)}`
+      `${index + 1} | ${item.name} | ${item.machine || "—"} | ${item.itemCode || "—"} | ${item.quantity} | ${formatINR(item.unitPricePaise)} | ${item.discountPercentage.toFixed(2)}% | -${formatINR(item.discountPaise)} | ${formatINR(item.netTotalPaise)}`
     ),
     `Subtotal after item discounts: ${formatINR(totals.subtotalPaise)}`,
     `GST @ 18%: ${formatINR(totals.gstPaise)}`,
