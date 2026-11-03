@@ -10,6 +10,7 @@ const PAGE_HEIGHT = 842;
 const PAGE_MARGIN = 35;
 const FOOTER_TOP = 194;
 const BODY_BOTTOM = FOOTER_TOP + 16;
+const SUMMARY_HEIGHT = 90;
 const COLORS = {
   black: "0.035 0.035 0.035",
   yellow: "1 0.78 0",
@@ -236,25 +237,23 @@ const drawRow = (commands, item, index, y, rowHeight) => {
 };
 
 const drawSummary = (commands, totals, y) => {
+  const totalQuantity = totals.items.reduce((sum, item) => sum + item.quantity, 0);
+  commands.push(commandText("Total Quantity", PAGE_MARGIN + 4, y - 12, { font: "F2", size: 7.2 }));
+  commands.push(rightText(String(totalQuantity), PAGE_WIDTH - PAGE_MARGIN - 4, y - 12, { font: "F2", size: 7.2 }));
+  commands.push(commandLine(PAGE_MARGIN, y - 22, PAGE_WIDTH - PAGE_MARGIN, y - 22, COLORS.line, 0.5));
+
   const rows = [
-    { label: "Total", amount: money(totals.subtotalPaise) },
+    { label: "Total", amount: money(totals.subtotalPaise), bold: true },
     { label: "GST (18%)", amount: money(totals.gstPaise) },
+    { label: "Final Amount", amount: money(totals.finalTotalPaise), bold: true },
   ];
-  let cursorY = y;
-  for (const { label, amount } of rows) {
-    cursorY -= 13;
-    commands.push(rightText(label, 450, cursorY, { size: 7.5, color: COLORS.muted }));
-    commands.push(rightText(amount, 556, cursorY, { font: "F2", size: 7.5 }));
-  }
-  cursorY -= 7;
-  commands.push(commandRect(330, cursorY - 5, 230, 25, {
-    fill: "0.98 0.94 0.77",
-    stroke: COLORS.yellow,
-    lineWidth: 0.8,
-  }));
-  commands.push(commandText("Final Amount", 338, cursorY + 3, { font: "F2", size: 7.5 }));
-  commands.push(rightText(money(totals.finalTotalPaise), 552, cursorY + 3, { font: "F2", size: 8.5 }));
-  return cursorY - 22;
+  rows.forEach(({ label, amount, bold }, index) => {
+    const rowY = y - 37 - index * 15;
+    const options = { size: 7.5, color: COLORS.ink, ...(bold ? { font: "F2" } : {}) };
+    commands.push(rightText(label, 450, rowY, options));
+    commands.push(rightText(amount, 556, rowY, options));
+  });
+  return y - SUMMARY_HEIGHT;
 };
 
 const drawFooter = (commands, pageNumber, pageCount) => {
@@ -322,7 +321,7 @@ const createPages = (quote, totals, logoDimensions) => {
     page.y -= rowHeight;
   });
 
-  if (page.y - 60 < BODY_BOTTOM) startPage();
+  if (page.y - 4 - SUMMARY_HEIGHT < BODY_BOTTOM) startPage();
   drawSummary(page.commands, totals, page.y - 4);
   pages.forEach(({ commands }, index) => drawFooter(commands, index + 1, pages.length));
   return pages;

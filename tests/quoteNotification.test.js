@@ -362,6 +362,8 @@ test("generates a valid multi-page PDF with per-item discount and GST breakdown"
   assert.ok(pdf.subarray(0, 8).toString("ascii").startsWith("%PDF-1.4"));
   assert.ok(pageCount > 1);
   assert.equal(pdf.subarray(startXref, startXref + 4).toString("ascii"), "xref");
+  assert.match(content, /\(Total Quantity\)/);
+  assert.match(content, /\(90\) Tj/);
   assert.match(content, /\(Total\)/);
   assert.doesNotMatch(content, /Subtotal/);
   assert.match(content, /Rs 8,100\.00/);
@@ -373,8 +375,15 @@ test("generates a valid multi-page PDF with per-item discount and GST breakdown"
   assert.match(content, /90\.00/);
   assert.match(content, /Final Amount/);
   assert.match(content, /Rs 9,558\.00/);
+  assert.equal(content.split("(Total Quantity)").length - 1, 1);
+  assert.equal(content.split("(Total)").length - 1, 1);
+  const gstLabel = "GST \\(18%\\)";
+  assert.equal(content.split(gstLabel).length - 1, 1);
+  assert.equal(content.split("(Final Amount)").length - 1, 1);
+  assert.ok(content.indexOf("(Total)") < content.indexOf(gstLabel));
+  assert.ok(content.indexOf(gstLabel) < content.indexOf("(Final Amount)"));
+  assert.doesNotMatch(content, /0\.98 0\.94 0\.77 rg/);
   assert.match(content, /\(1 Nos\)/);
-  assert.doesNotMatch(content, /TOTAL QUANTITY/);
   assert.match(content, /P-1/);
   assert.match(content, /Part 90/);
   assert.match(content, /100\.00/);
