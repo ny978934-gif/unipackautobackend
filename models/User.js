@@ -16,11 +16,34 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       maxlength: 254,
     },
-    // Stored as "scrypt$<salt_base64url>$<hash_base64url>" — same scheme as Admin
+    userId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      maxlength: 40,
+      unique: true,
+      sparse: true,
+    },
     passwordHash: {
       type: String,
       required: true,
       select: false,       // never returned in queries by default
+    },
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+      index: true,
+    },
+    authVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+      select: false,
     },
     phone: {
       type: String,

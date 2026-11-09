@@ -11,6 +11,7 @@ import productRoutes from './routes/productRoutes.js';
 import sparePartImportRoutes from './routes/sparePartImportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import adminUserRoutes from './routes/adminUserRoutes.js';
 import cartRoutes from './routes/cartRoutes.js';
 import { createCorsOptions } from './config/cors.js';
 import { requireAdmin } from './middleware/adminAuth.js';
@@ -20,6 +21,7 @@ import Inquiry from './models/Inquiry.js';
 import QuoteRequest from './models/QuoteRequest.js';
 import { seedDatabase } from './seed.js';
 import backfillCatalogTypes from './migrations/backfillCatalogTypes.js';
+import backfillUserIds from './migrations/backfillUserIds.js';
 import { uploadsDirectory } from './config/uploads.js';
 
 const app = express();
@@ -89,6 +91,7 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/admin/users', adminUserRoutes);
 app.use('/api/cart',  cartRoutes);
 
 // Admin stats
@@ -144,6 +147,7 @@ app.use((error, req, res, next) => {
 connectDB()
   .then(async () => {
     await backfillCatalogTypes();
+    await backfillUserIds();
     try {
       await seedDatabase(false);
     } catch (err) {

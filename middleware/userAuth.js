@@ -1,15 +1,15 @@
 /**
  * User authentication middleware
  *
- * Uses the exact same hand-rolled JWT + scrypt approach as adminAuth.js
- * so we have zero extra npm dependencies.
+ * Customer password hashes use bcrypt; existing scrypt hashes are verified
+ * and upgraded on successful login.
  *
- * Token storage: the client keeps the token in localStorage under
- * "unipack-user-token". The server sends/validates it via
- * "Authorization: Bearer <token>".
+ * User sessions carry a role and version so role boundaries are explicit and
+ * password resets can revoke existing tokens.
  */
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
+import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 
 const scrypt = promisify(scryptCallback);
@@ -29,12 +29,22 @@ const getJwtSecret = () => {
 };
 
 export const hashPassword = async (password) => {
-  const salt = randomBytes(16);
-  const hash = await scrypt(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
-  return `scrypt$${salt.toString("base64url")}$${hash.toString("base64url")}`;
+  if (Buffer.byteLength(password, "utf8") > 72) {
+    const error = new Error("Password must be 72 bytes or fewer.");
+    error.status = 400;
+    throw error;
+  }
+  return bcrypt.hash(password, 12);
 };
 
+export const generateUserId = () => `UPA-${randomBytes(6).toString("hex").toUpperCase()}`;
+
+export const generateSecurePassword = () => randomBytes(24).toString("base64url");
+
 export const verifyPassword = async (password, storedHash) => {
+  if (/^\$2[aby]\$/.test(String(storedHash || ""))) {
+    return bcrypt.compare(password, storedHash);
+  }
   const [algorithm, saltText, hashText, ...extra] = String(storedHash || "").split("$");
   if (algorithm !== "scrypt" || !saltText || !hashText || extra.length) return false;
   let salt, expected;
@@ -49,7 +59,7 @@ export const verifyPassword = async (password, storedHash) => {
   return timingSafeEqual(expected, actual);
 };
 
-export const createUserToken = (userId) => {
+export const createUserToken = (userId, authVersion = 0) => {
   const issuedAt = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({
@@ -57,6 +67,7 @@ export const createUserToken = (userId) => {
     iat: issuedAt,
     exp: issuedAt + USER_TOKEN_LIFETIME_SECONDS,
     role: "user",
+    ver: authVersion,
   })).toString("base64url");
   const content = `${header}.${payload}`;
   const signature = createHmac("sha256", getJwtSecret()).update(content).digest("base64url");
@@ -78,11 +89,15 @@ export const verifyUserToken = (token) => {
     return null;
   }
   if (
+    headerText !== Buffer.from(JSON.stringify(header)).toString("base64url") ||
+    payloadText !== Buffer.from(JSON.stringify(payload)).toString("base64url") ||
+    signatureText !== provided.toString("base64url") ||
     header.alg !== "HS256" ||
     payload.role !== "user" ||
     provided.length !== expected.length ||
     !timingSafeEqual(expected, provided) ||
     typeof payload.sub !== "string" ||
+    (payload.ver !== undefined && (!Number.isInteger(payload.ver) || payload.ver < 0)) ||
     !Number.isInteger(payload.exp) ||
     payload.exp <= Math.floor(Date.now() / 1000)
   ) return null;
@@ -100,8 +115,15 @@ export const requireUser = async (req, res, next) => {
     const payload = verifyUserToken(match[1]);
     if (!payload) return res.status(401).json({ message: "Session invalid or expired. Please log in again." });
 
-    const user = await User.findById(payload.sub).select("_id name email phone company").lean();
-    if (!user) return res.status(401).json({ message: "Account no longer exists." });
+    const user = await User.findOne({
+      _id: payload.sub,
+      status: "active",
+      deletedAt: null,
+    }).select("_id name email userId phone company status authVersion").lean();
+    if (!user) return res.status(401).json({ message: "Account is unavailable. Contact an administrator." });
+    if ((payload.ver ?? 0) !== (user.authVersion ?? 0)) {
+      return res.status(401).json({ message: "Session has been revoked. Please sign in again." });
+    }
 
     req.user = user;
     return next();
@@ -120,11 +142,15 @@ export const optionalUser = async (req, res, next) => {
   try {
     const payload = verifyUserToken(match[1]);
     if (payload) {
-      const user = await User.findById(payload.sub).select("_id name email").lean();
-      if (user) req.user = user;
+      const user = await User.findOne({
+        _id: payload.sub,
+        status: "active",
+        deletedAt: null,
+      }).select("_id name email userId authVersion").lean();
+      if (user && (payload.ver ?? 0) === (user.authVersion ?? 0)) req.user = user;
     }
-  } catch {
-    // intentionally silent — optional auth never blocks
+  } catch (error) {
+    return next(error);
   }
   return next();
 };

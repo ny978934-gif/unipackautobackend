@@ -44,6 +44,7 @@ export const createAdminToken = (adminId) => {
     sub: String(adminId),
     iat: issuedAt,
     exp: issuedAt + JWT_LIFETIME_SECONDS,
+    role: "admin",
   })).toString("base64url");
   const content = `${header}.${payload}`;
   const signature = createHmac("sha256", getJwtSecret()).update(content).digest("base64url");
@@ -76,6 +77,7 @@ export const verifyAdminToken = (token) => {
     provided.length !== expected.length ||
     !timingSafeEqual(expected, provided) ||
     typeof payload.sub !== "string" ||
+    (payload.role !== undefined && payload.role !== "admin") ||
     !Number.isInteger(payload.exp) ||
     payload.exp <= Math.floor(Date.now() / 1000)
   ) return null;

@@ -49,6 +49,12 @@ const quoteRequestSchema = new mongoose.Schema(
     company: { type: String, required: true, trim: true, maxlength: 200 },
     contactName: { type: String, required: true, trim: true, maxlength: 160 },
     email: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
+    assignedUser: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
     phone: { type: String, required: true, trim: true, maxlength: 30 },
     city: { type: String, required: true, trim: true, maxlength: 120 },
     state: { type: String, required: true, trim: true, maxlength: 120 },
