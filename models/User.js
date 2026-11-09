@@ -35,6 +35,11 @@ const userSchema = new mongoose.Schema(
       default: "active",
       index: true,
     },
+    managedByAdmin: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     authVersion: {
       type: Number,
       default: 0,

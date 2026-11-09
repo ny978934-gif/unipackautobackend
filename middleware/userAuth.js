@@ -1,8 +1,8 @@
 /**
  * User authentication middleware
  *
- * Customer password hashes use bcrypt; existing scrypt hashes are verified
- * and upgraded on successful login.
+ * Admin-managed accounts use bcrypt, while public customer accounts retain
+ * their existing scrypt hashes. Both formats remain verifiable.
  *
  * User sessions carry a role and version so role boundaries are explicit and
  * password resets can revoke existing tokens.
@@ -37,6 +37,17 @@ export const hashPassword = async (password) => {
   return bcrypt.hash(password, 12);
 };
 
+export const hashLegacyPassword = async (password) => {
+  const salt = randomBytes(16);
+  const hash = await scrypt(password, salt, 64, {
+    N: 16384,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024,
+  });
+  return `scrypt$${salt.toString("base64url")}$${hash.toString("base64url")}`;
+};
+
 export const generateUserId = () => `UPA-${randomBytes(6).toString("hex").toUpperCase()}`;
 
 export const generateSecurePassword = () => randomBytes(24).toString("base64url");
@@ -59,7 +70,11 @@ export const verifyPassword = async (password, storedHash) => {
   return timingSafeEqual(expected, actual);
 };
 
-export const createUserToken = (userId, authVersion = 0) => {
+// Older admin-managed accounts predate the explicit management marker.
+export const isAdminManagedUser = (user) =>
+  user?.managedByAdmin === true || /^\$2[aby]\$/.test(String(user?.passwordHash || ""));
+
+export const createUserToken = (userId, authVersion = 0, portalAccess = false) => {
   const issuedAt = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({
@@ -68,6 +83,7 @@ export const createUserToken = (userId, authVersion = 0) => {
     exp: issuedAt + USER_TOKEN_LIFETIME_SECONDS,
     role: "user",
     ver: authVersion,
+    ...(portalAccess ? { portal: true } : {}),
   })).toString("base64url");
   const content = `${header}.${payload}`;
   const signature = createHmac("sha256", getJwtSecret()).update(content).digest("base64url");
@@ -126,11 +142,23 @@ export const requireUser = async (req, res, next) => {
     }
 
     req.user = user;
+    req.portalAccess = payload.portal === true;
     return next();
   } catch (error) {
     if (error.status) return res.status(error.status).json({ message: error.message });
     return next(error);
   }
+};
+
+export const requirePortalUser = async (req, res, next) => {
+  await requireUser(req, res, (error) => {
+    if (error) return next(error);
+    if (!req.user) return undefined;
+    if (!req.portalAccess) {
+      return res.status(403).json({ message: "User portal access is required." });
+    }
+    return next();
+  });
 };
 
 /** Optional auth — attaches req.user if a valid token is present, but never blocks the request */

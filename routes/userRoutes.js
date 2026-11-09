@@ -5,9 +5,10 @@ import Inquiry from "../models/Inquiry.js";
 import QuoteRequest from "../models/QuoteRequest.js";
 import {
   createUserToken,
-  generateUserId,
-  hashPassword,
+  hashLegacyPassword,
+  isAdminManagedUser,
   requireUser,
+  requirePortalUser,
   verifyPassword,
 } from "../middleware/userAuth.js";
 
@@ -42,14 +43,6 @@ const recordFailedAttempt = (key) => {
   });
 };
 
-const createAvailableUserId = async () => {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const userId = generateUserId();
-    if (!(await User.exists({ userId }))) return userId;
-  }
-  throw new Error("Could not generate an available user ID. Please try again.");
-};
-
 const validateSignup = (body) => {
   const errors = {};
   const name    = String(body.name    || "").trim();
@@ -62,8 +55,8 @@ const validateSignup = (body) => {
     errors.name = "Name must be 2–120 characters.";
   if (!EMAIL_RE.test(email))
     errors.email = "Enter a valid email address.";
-  if (password.length < 12 || Buffer.byteLength(password, "utf8") > 72)
-    errors.password = "Password must be at least 12 characters and no more than 72 bytes.";
+  if (password.length < 8 || password.length > 1024)
+    errors.password = "Password must be 8–1024 characters.";
   if (phone && !/^[+\d\s().\-]{7,20}$/.test(phone))
     errors.phone = "Enter a valid phone number.";
 
@@ -87,11 +80,10 @@ router.post("/signup", async (req, res) => {
       });
     }
 
-    const passwordHash = await hashPassword(fields.password);
+    const passwordHash = await hashLegacyPassword(fields.password);
     const user = await User.create({
       name:    fields.name,
       email:   fields.email,
-      userId:  await createAvailableUserId(),
       passwordHash,
       phone:   fields.phone,
       company: fields.company,
@@ -126,31 +118,25 @@ router.post("/signup", async (req, res) => {
 
 router.post("/login", rateLimitLogin, async (req, res) => {
   const email    = String(req.body?.email    || "").trim().toLowerCase();
-  const userId   = String(req.body?.userId   || "").trim().toUpperCase();
   const password = String(req.body?.password || "");
 
-  if (!EMAIL_RE.test(email) || email.length > 254 || !userId || userId.length > 40 || !password || password.length > 1024) {
-    return res.status(400).json({ message: "Email, User ID, and password are required." });
+  if (!EMAIL_RE.test(email) || email.length > 254 || !password || password.length > 1024) {
+    return res.status(400).json({ message: "Email and password are required." });
   }
 
   try {
     // +passwordHash — re-include the field that has select:false
     const user = await User.findOne({
       email,
-      userId,
       status: "active",
       deletedAt: null,
     }).select("+passwordHash");
     const ok = await verifyPassword(password, user?.passwordHash || "");
-    if (!user || !ok) {
+    if (!user || isAdminManagedUser(user) || !ok) {
       recordFailedAttempt(req.loginRateLimitKey);
-      return res.status(401).json({ message: "Incorrect email, User ID, or password." });
+      return res.status(401).json({ message: "Incorrect email or password." });
     }
 
-    if (!user.passwordHash.startsWith("$2") && Buffer.byteLength(password, "utf8") <= 72) {
-      user.passwordHash = await hashPassword(password);
-      await user.save();
-    }
     failedAttempts.delete(req.loginRateLimitKey);
     const token = createUserToken(user._id, user.authVersion || 0);
     return res.status(200).json({
@@ -171,10 +157,57 @@ router.post("/login", rateLimitLogin, async (req, res) => {
   }
 });
 
+router.post("/portal-login", rateLimitLogin, async (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const userId = String(req.body?.userId || "").trim().toUpperCase();
+  const password = String(req.body?.password || "");
+  if (
+    !EMAIL_RE.test(email) ||
+    email.length > 254 ||
+    !userId ||
+    userId.length > 40 ||
+    !password ||
+    password.length > 1024
+  ) {
+    return res.status(400).json({ message: "Email, User ID, and password are required." });
+  }
+
+  try {
+    const user = await User.findOne({
+      email,
+      userId,
+      status: "active",
+      deletedAt: null,
+    }).select("+passwordHash");
+    const valid = await verifyPassword(password, user?.passwordHash || "");
+    if (!user || !isAdminManagedUser(user) || !valid) {
+      recordFailedAttempt(req.loginRateLimitKey);
+      return res.status(401).json({ message: "Incorrect email, User ID, or password." });
+    }
+
+    failedAttempts.delete(req.loginRateLimitKey);
+    return res.json({
+      message: "Logged in successfully.",
+      token: createUserToken(user._id, user.authVersion || 0, true),
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        userId: user.userId,
+        phone: user.phone,
+        company: user.company,
+      },
+    });
+  } catch (error) {
+    console.error("User portal login error:", error);
+    return res.status(500).json({ message: "Login failed. Please try again." });
+  }
+});
+
 // ── GET /api/users/me  (requires login) ───────────────────────────────────────
 
 router.get("/me", requireUser, (req, res) => {
-  res.json({ user: req.user });
+  res.json({ user: req.user, portalAccess: Boolean(req.portalAccess) });
 });
 
 // ── PATCH /api/users/me  (update profile) ────────────────────────────────────
@@ -208,7 +241,7 @@ router.patch("/me", requireUser, async (req, res) => {
   }
 });
 
-router.get("/me/quotes", requireUser, async (req, res, next) => {
+router.get("/me/quotes", requirePortalUser, async (req, res, next) => {
   try {
     const quotes = await QuoteRequest.find({ assignedUser: req.user._id })
       .select(
@@ -222,7 +255,7 @@ router.get("/me/quotes", requireUser, async (req, res, next) => {
   }
 });
 
-router.get("/me/inquiries", requireUser, async (req, res, next) => {
+router.get("/me/inquiries", requirePortalUser, async (req, res, next) => {
   try {
     const inquiries = await Inquiry.find({ assignedUser: req.user._id })
       .select("_id name company email phone machineInterest message status createdAt")
@@ -234,7 +267,7 @@ router.get("/me/inquiries", requireUser, async (req, res, next) => {
   }
 });
 
-router.patch("/me/password", requireUser, async (req, res) => {
+router.patch("/me/password", requirePortalUser, async (req, res) => {
   const currentPassword = typeof req.body?.currentPassword === "string" ? req.body.currentPassword : "";
   const newPassword = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
   if (!currentPassword || currentPassword.length > 1024) {
@@ -253,7 +286,7 @@ router.patch("/me/password", requireUser, async (req, res) => {
     await user.save();
     return res.json({
       message: "Password changed successfully.",
-      token: createUserToken(user._id, user.authVersion),
+      token: createUserToken(user._id, user.authVersion, true),
     });
   } catch (error) {
     console.error("Password change error:", error);

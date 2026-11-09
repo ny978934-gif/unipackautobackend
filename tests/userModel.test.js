@@ -15,10 +15,24 @@ test("user accounts support unique IDs, activation, and soft deletion", () => {
   assert.equal(user.validateSync(), undefined);
   assert.equal(user.userId, "UPA-1234");
   assert.equal(user.status, "active");
+  assert.equal(user.managedByAdmin, false);
   assert.equal(user.authVersion, 0);
   assert.equal(user.deletedAt, null);
   user.status = "disabled";
   assert.ok(user.validateSync().errors.status);
+});
+
+test("admin-managed accounts are distinguishable from public website accounts", () => {
+  const user = new User({
+    name: "Managed Customer",
+    email: "managed@example.com",
+    userId: "UPA-4321",
+    passwordHash: "$2b$12$placeholder",
+    managedByAdmin: true,
+  });
+
+  assert.equal(user.validateSync(), undefined);
+  assert.equal(user.managedByAdmin, true);
 });
 
 test("legacy users without an assigned user ID remain valid for migration", () => {

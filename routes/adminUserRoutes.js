@@ -98,6 +98,7 @@ router.post("/", async (req, res, next) => {
       userId,
       passwordHash: await hashPassword(password),
       status: "active",
+      managedByAdmin: true,
     });
     return res.status(201).json({
       user: publicUser(user),
