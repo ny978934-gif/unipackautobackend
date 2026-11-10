@@ -5,21 +5,22 @@ import { Router } from "express";
 import multer from "multer";
 import mongoose from "mongoose";
 import QuoteRequest from "../models/QuoteRequest.js";
-import Product from "../models/Product.js";
 import User from "../models/User.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
 import { optionalUser } from "../middleware/userAuth.js";
 import cloudinary, { isConfigured } from "../config/cloudinary.js";
 import { uploadsDirectory } from "../config/uploads.js";
 import {
-  createQuotationNumber,
   calculateQuotationTotals,
-  calculateQuotationTotalsFromPaise,
   describeEmailFailure,
-  sendFinalQuotation,
   sendQuoteRequestNotification,
 } from "../services/quoteNotification.js";
-import { buildQuotationPdf } from "../services/quotePdf.js";
+import {
+  buildQuotationPdf,
+  enrichPartsWithPrices,
+  getQuotationTotals,
+  sendFinalizedQuotation,
+} from "../services/quoteManagement.js";
 
 const router = Router();
 const maximumAttachmentSize = 10 * 1024 * 1024;
@@ -85,94 +86,6 @@ const readQuantity = (value, field) => {
     throw new QuoteInputError(`${field} must be a whole number between 1 and 100,000.`);
   }
   return quantity;
-};
-
-const applyQuotationTotals = (quote, totals, quotationNumber, issuedAt) => {
-  quote.quotation.number = quotationNumber;
-  quote.quotation.sentAt = issuedAt;
-  quote.quotation.items = totals.items.map((item) => ({
-    name: item.name,
-    itemCode: item.itemCode || "",
-    machine: item.machine || "",
-    uom: item.uom || "",
-    quantity: item.quantity,
-    unitPricePaise: item.unitPricePaise,
-    totalPaise: item.totalPaise,
-    discountPercentage: item.discountPercentage,
-    discountPaise: item.discountPaise,
-    netTotalPaise: item.netTotalPaise,
-  }));
-  quote.quotation.subtotalCents = totals.subtotalPaise;
-  quote.quotation.gstCents = totals.gstPaise;
-  quote.quotation.grossTotalCents = totals.grandTotalPaise;
-  quote.quotation.finalTotalCents = totals.finalTotalPaise;
-};
-
-const getQuotationTotals = async (quote, discountPercentages) => {
-  if (quote.quotation?.items?.length) {
-    const productIds = [
-      ...new Set(
-        (quote.parts || [])
-          .map((part) => part.productId)
-          .filter((id) => id && mongoose.isValidObjectId(id))
-          .map(String)
-      ),
-    ];
-    const products = productIds.length
-      ? await Product.find(
-        { _id: { $in: productIds }, type: "sparepart" },
-        { _id: 1, uom: 1 }
-      ).lean()
-      : [];
-    const uomByProductId = new Map(products.map((product) => [String(product._id), product.uom || ""]));
-
-    return calculateQuotationTotalsFromPaise(
-      quote.quotation.items.map((item, index) => ({
-        ...(item.toObject?.() ?? item),
-        unitPricePaise: item.unitPricePaise,
-        uom: item.uom || uomByProductId.get(String(quote.parts?.[index]?.productId)) || "",
-        discountPercentage: discountPercentages?.[index] ??
-          item.discountPercentage ??
-          0,
-      }))
-    );
-  }
-  const pricedItems = await enrichPartsWithPrices(quote.parts || []);
-  return calculateQuotationTotals(pricedItems.map((item, index) => ({
-    ...item,
-    discountPercentage: discountPercentages?.[index] ?? 0,
-  })));
-};
-
-const sendFinalizedQuotation = async (quote, totals, { issuedAt }) => {
-  const quotationNumber = quote.quotation.number || createQuotationNumber(quote.id, issuedAt);
-  applyQuotationTotals(quote, totals, quotationNumber, issuedAt);
-  quote.notificationStatus = "pending";
-  quote.notificationError = "";
-  quote.status = "quoted";
-  await quote.save();
-
-  try {
-    const quotationPdf = buildQuotationPdf(quote, totals);
-    await sendFinalQuotation(quote, totals, {
-      quotationNumber,
-      issuedAt,
-      quotationPdf,
-    });
-    quote.notificationStatus = "sent";
-    quote.notificationError = "";
-    await quote.save();
-    return { notificationSent: true, request: quote };
-  } catch (error) {
-    quote.notificationStatus = "failed";
-    quote.notificationError = describeEmailFailure(error);
-    await quote.save();
-    console.error(`Updated quotation email failed for ${quote.id}:`, {
-      message: error.message,
-      guidance: quote.notificationError,
-    });
-    return { notificationSent: false, notificationError: quote.notificationError, request: quote };
-  }
 };
 
 export const validateQuote = (body) => {
@@ -267,58 +180,6 @@ const storeAttachment = async (req, file) => {
     size: file.size,
   };
 };
-
-// ── Price lookup ──────────────────────────────────────────────────────────────
-/**
- * For each spare-part row in the validated quote, fetch the catalogue price
- * from MongoDB using the productId the frontend sent.
- *
- * Returns an array ready for request or finalized quotation totals:
- *   { name, itemCode, uom, quantity, unitPrice (rupees from the catalogue) }
- */
-const enrichPartsWithPrices = async (parts) => {
-  // Collect distinct valid ObjectIds
-  const validIds = [
-    ...new Set(
-      parts
-        .map((p) => p.productId)
-        .filter((id) => id && mongoose.isValidObjectId(id))
-    ),
-  ];
-  if (parts.some((part) => !part.productId || !mongoose.isValidObjectId(part.productId))) {
-    throw new Error("Every spare part must be selected from the current catalogue.");
-  }
-
-  // Fetch all in one query
-  const products = validIds.length
-    ? await Product.find(
-        { _id: { $in: validIds }, type: "sparepart" },
-        { _id: 1, name: 1, partCode: 1, price: 1, uom: 1 }
-      ).lean()
-    : [];
-
-  const priceMap = new Map(
-    products.map((p) => [String(p._id), p])
-  );
-
-  return parts.map((part, index) => {
-    const product = part.productId ? priceMap.get(String(part.productId)) : null;
-    if (!product || typeof product.price !== "number" || !Number.isFinite(product.price) || product.price <= 0) {
-      throw new Error(`A catalogue price is not configured for spare part ${index + 1}.`);
-    }
-    return {
-      name:      product.name,
-      itemCode:  product.partCode || part.itemCode || "",
-      machine:   part.machine || "",
-      uom:       product.uom || "",
-      quantity:  part.quantity,
-      // Never accept pricing from the submitted form; catalogue prices are authoritative.
-      unitPrice: product.price,
-    };
-  });
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 router.post("/", optionalUser, parseAttachment, async (req, res) => {
   let quote;

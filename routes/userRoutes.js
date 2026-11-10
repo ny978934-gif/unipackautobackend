@@ -11,11 +11,17 @@ import {
   requirePortalUser,
   verifyPassword,
 } from "../middleware/userAuth.js";
+import {
+  buildQuotationPdf,
+  getQuotationTotals,
+  sendFinalizedQuotation,
+} from "../services/quoteManagement.js";
 
 const router = Router();
 const failedAttempts = new Map();
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 10;
+const QUOTE_STATUSES = ["new", "in_progress", "quoted", "closed"];
 
 // ── Validation helpers ────────────────────────────────────────────────────────
 
@@ -244,9 +250,8 @@ router.patch("/me", requireUser, async (req, res) => {
 router.get("/me/quotes", requirePortalUser, async (req, res, next) => {
   try {
     const quotes = await QuoteRequest.find({ assignedUser: req.user._id })
-      .select(
-        "_id quoteType company contactName email phone city state message parts machineType model quantity specifications status quotation attachment createdAt updatedAt"
-      )
+      .select("-customerAccessTokenHash")
+      .populate("assignedUser", "_id name email userId")
       .sort({ createdAt: -1 })
       .lean();
     return res.json({ quotes });
@@ -255,10 +260,112 @@ router.get("/me/quotes", requirePortalUser, async (req, res, next) => {
   }
 });
 
+router.patch("/me/quotes/:id/status", requirePortalUser, async (req, res, next) => {
+  const { status } = req.body || {};
+  if (!QUOTE_STATUSES.includes(status)) {
+    return res.status(400).json({ message: "Choose a valid quote request status." });
+  }
+  try {
+    const request = await QuoteRequest.findOneAndUpdate(
+      { _id: req.params.id, assignedUser: req.user._id },
+      { status },
+      { new: true, runValidators: true }
+    ).populate("assignedUser", "_id name email userId");
+    if (!request) return res.status(404).json({ message: "Assigned quote request not found." });
+    return res.json({ request });
+  } catch (error) {
+    if (error.name === "CastError") return res.status(404).json({ message: "Assigned quote request not found." });
+    return next(error);
+  }
+});
+
+router.get("/me/quotes/:id/pdf", requirePortalUser, async (req, res) => {
+  try {
+    const quote = await QuoteRequest.findOne({
+      _id: req.params.id,
+      assignedUser: req.user._id,
+    });
+    if (!quote || quote.quoteType !== "sparePart") {
+      return res.status(404).json({ message: "Assigned spare-part quotation not found." });
+    }
+    if (!quote.quotation?.sentAt || !quote.quotation?.items?.length) {
+      return res.status(409).json({ message: "Finalize the quotation before downloading its PDF." });
+    }
+    const totals = await getQuotationTotals(quote);
+    const pdf = buildQuotationPdf(quote, totals);
+    const filename = `${(quote.quotation.number || "quotation").replace(/[^a-z0-9-]/gi, "-")}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", pdf.length);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.send(pdf);
+  } catch (error) {
+    if (error.name === "CastError") return res.status(404).json({ message: "Assigned quotation not found." });
+    console.error("Failed to generate portal quotation PDF:", error);
+    return res.status(500).json({ message: "Could not generate the quotation PDF." });
+  }
+});
+
+router.patch("/me/quotes/:id/quotation", requirePortalUser, async (req, res) => {
+  try {
+    const quote = await QuoteRequest.findOne({
+      _id: req.params.id,
+      assignedUser: req.user._id,
+    });
+    if (!quote || quote.quoteType !== "sparePart") {
+      return res.status(404).json({ message: "Assigned spare-part quote request not found." });
+    }
+    const discountPercentages = req.body?.discountPercentages;
+    if (!Array.isArray(discountPercentages) || discountPercentages.length !== quote.parts.length) {
+      return res.status(400).json({ message: "Provide a discount percentage for every spare part." });
+    }
+    if (discountPercentages.some((value) =>
+      typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100
+    )) {
+      return res.status(400).json({ message: "Each item discount must be a percentage from 0 to 100." });
+    }
+    const wasFinalized = Boolean(quote.quotation?.sentAt);
+    const discountsAreUnchanged = quote.quotation?.items?.length === discountPercentages.length &&
+      quote.quotation.items.every((item, index) =>
+        Number(item.discountPercentage || 0) === discountPercentages[index]
+      );
+    if (wasFinalized && quote.notificationStatus === "sent" && discountsAreUnchanged) {
+      return res.json({
+        message: "This quotation has already been emailed with these item discounts.",
+        notificationSent: true,
+        alreadySent: true,
+        request: quote,
+      });
+    }
+    const totals = await getQuotationTotals(quote, discountPercentages);
+    const delivery = await sendFinalizedQuotation(quote, totals, {
+      issuedAt: new Date(),
+    });
+    return res.json({
+      message: delivery.notificationSent
+        ? wasFinalized
+          ? "Item discounts saved and revised quotation emailed to the owner and customer."
+          : "Quotation finalized and emailed to the owner and customer."
+        : wasFinalized
+          ? "Item discounts saved, but the revised quotation email could not be delivered to both recipients."
+          : "Quotation finalized, but the email could not be delivered to both recipients.",
+      notificationSent: delivery.notificationSent,
+      notificationError: delivery.notificationError || "",
+      request: delivery.request,
+    });
+  } catch (error) {
+    if (error.name === "CastError") return res.status(404).json({ message: "Assigned quote request not found." });
+    if (error.status) return res.status(error.status).json({ message: error.message });
+    console.error("Failed to save portal quotation:", error);
+    return res.status(500).json({ message: "Could not save the quotation." });
+  }
+});
+
 router.get("/me/inquiries", requirePortalUser, async (req, res, next) => {
   try {
     const inquiries = await Inquiry.find({ assignedUser: req.user._id })
-      .select("_id name company email phone machineInterest message status createdAt")
+      .select("_id name company email phone machineInterest message status assignedUser createdAt updatedAt")
+      .populate("assignedUser", "_id name email userId")
       .sort({ createdAt: -1 })
       .lean();
     return res.json({ inquiries });

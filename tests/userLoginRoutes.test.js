@@ -59,7 +59,7 @@ test("public and admin-route user logins authenticate separate account types", a
     const sendLogin = async (path, body) => {
       const response = await fetch(`http://127.0.0.1:${address.port}/api/users/${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Connection: "close" },
         body: JSON.stringify(body),
       });
       return { status: response.status, data: await response.json() };
