@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import QuoteRequest from "../models/QuoteRequest.js";
 import quoteRoutes, { validateQuote } from "../routes/quoteRoutes.js";
+import { setQuotationCreatorIfMissing } from "../services/quoteManagement.js";
 
 const contact = {
   company: "Example Packaging",
@@ -93,4 +94,106 @@ test("quotation snapshot and per-item discount amounts validate", () => {
   assert.equal(request.quotation.finalTotalCents, 531000);
   request.quotation.items[0].discountPercentage = 101;
   assert.ok(request.validateSync().errors["quotation.items.0.discountPercentage"]);
+});
+
+test("quotation creator stores authenticated admin or portal user identity", () => {
+  const userId = "507f1f77bcf86cd799439012";
+  const adminId = "507f1f77bcf86cd799439013";
+  const userQuote = new QuoteRequest({
+    ...contact,
+    quoteType: "sparePart",
+    quotation: {
+      createdBy: {
+        type: "user",
+        databaseId: userId,
+        name: "Portal User",
+        userId: "UPA-123456",
+      },
+    },
+  });
+  const adminQuote = new QuoteRequest({
+    ...contact,
+    quoteType: "sparePart",
+    quotation: {
+      createdBy: {
+        type: "admin",
+        databaseId: adminId,
+        name: "Admin",
+      },
+    },
+  });
+
+  assert.equal(userQuote.validateSync(), undefined);
+  assert.equal(String(userQuote.quotation.createdBy.databaseId), userId);
+  assert.equal(userQuote.quotation.createdBy.name, "Portal User");
+  assert.equal(userQuote.quotation.createdBy.userId, "UPA-123456");
+  assert.equal(adminQuote.validateSync(), undefined);
+  assert.equal(String(adminQuote.quotation.createdBy.databaseId), adminId);
+});
+
+test("quotation creator rejects unsupported or incomplete creator data", () => {
+  const quote = new QuoteRequest({
+    ...contact,
+    quoteType: "sparePart",
+    quotation: {
+      createdBy: {
+        type: "website",
+        name: "Website Customer",
+      },
+    },
+  });
+
+  const validationError = quote.validateSync();
+  assert.ok(validationError.errors["quotation.createdBy.type"]);
+  assert.ok(validationError.errors["quotation.createdBy.databaseId"]);
+
+  const incompleteUserCreator = new QuoteRequest({
+    ...contact,
+    quoteType: "sparePart",
+    quotation: {
+      createdBy: {
+        type: "user",
+        databaseId: "507f1f77bcf86cd799439012",
+      },
+    },
+  }).validateSync();
+  assert.ok(incompleteUserCreator.errors["quotation.createdBy.name"]);
+  assert.ok(incompleteUserCreator.errors["quotation.createdBy.userId"]);
+});
+
+test("quotation edits preserve the original creator", () => {
+  const originalCreator = {
+    type: "user",
+    databaseId: "507f1f77bcf86cd799439012",
+    name: "Original User",
+    userId: "UPA-123456",
+  };
+  const quote = { quotation: { createdBy: null } };
+
+  setQuotationCreatorIfMissing(quote, originalCreator);
+  setQuotationCreatorIfMissing(quote, {
+    type: "admin",
+    databaseId: "507f1f77bcf86cd799439013",
+    name: "Admin",
+  });
+
+  assert.deepEqual(quote.quotation.createdBy, originalCreator);
+});
+
+test("editing a legacy quotation does not attribute it to the later editor", () => {
+  const quote = {
+    quotation: {
+      sentAt: new Date("2026-10-01T00:00:00.000Z"),
+      createdBy: null,
+    },
+  };
+
+  setQuotationCreatorIfMissing(quote, {
+    type: "user",
+    databaseId: "507f1f77bcf86cd799439012",
+    name: "Later Editor",
+    userId: "UPA-123456",
+  });
+
+  assert.equal(quote.quotation.createdBy, null);
 });

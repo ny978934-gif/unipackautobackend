@@ -8,12 +8,6 @@ const inquirySchema = new mongoose.Schema(
     phone: { type: String, trim: true },
     machineInterest: { type: String, trim: true },
     message: { type: String, required: true, trim: true },
-    assignedUser: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-      index: true,
-    },
     status: {
       type: String,
       enum: ["new", "contacted", "closed"],

@@ -45,13 +45,11 @@ test("legacy users without an assigned user ID remain valid for migration", () =
   assert.equal(user.validateSync(), undefined);
 });
 
-test("inquiries and quote requests can be assigned to a user", () => {
-  const assignedUser = "507f1f77bcf86cd799439011";
+test("inquiries and quote requests do not require user assignment", () => {
   const inquiry = new Inquiry({
     name: "Example Customer",
     email: "customer@example.com",
     message: "Please call me.",
-    assignedUser,
   });
   const quote = new QuoteRequest({
     quoteType: "machine",
@@ -61,13 +59,12 @@ test("inquiries and quote requests can be assigned to a user", () => {
     phone: "+91 98765 43210",
     city: "Bhiwadi",
     state: "Rajasthan",
-    assignedUser,
     machineType: "Strapping machine",
     quantity: 1,
   });
 
   assert.equal(inquiry.validateSync(), undefined);
   assert.equal(quote.validateSync(), undefined);
-  assert.equal(String(inquiry.assignedUser), assignedUser);
-  assert.equal(String(quote.assignedUser), assignedUser);
+  assert.equal(Inquiry.schema.path("assignedUser"), undefined);
+  assert.equal(QuoteRequest.schema.path("assignedUser"), undefined);
 });

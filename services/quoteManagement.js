@@ -30,6 +30,12 @@ const applyQuotationTotals = (quote, totals, quotationNumber, issuedAt) => {
   quote.quotation.finalTotalCents = totals.finalTotalPaise;
 };
 
+export const setQuotationCreatorIfMissing = (quote, creator) => {
+  if (!quote.quotation.sentAt && !quote.quotation.createdBy && creator) {
+    quote.quotation.createdBy = creator;
+  }
+};
+
 export const enrichPartsWithPrices = async (parts) => {
   const validIds = [
     ...new Set(
@@ -102,8 +108,9 @@ export const getQuotationTotals = async (quote, discountPercentages) => {
   })));
 };
 
-export const sendFinalizedQuotation = async (quote, totals, { issuedAt }) => {
+export const sendFinalizedQuotation = async (quote, totals, { issuedAt, creator }) => {
   const quotationNumber = quote.quotation.number || createQuotationNumber(quote.id, issuedAt);
+  setQuotationCreatorIfMissing(quote, creator);
   applyQuotationTotals(quote, totals, quotationNumber, issuedAt);
   quote.notificationStatus = "pending";
   quote.notificationError = "";

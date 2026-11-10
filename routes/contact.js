@@ -1,13 +1,12 @@
 import { Router } from 'express';
 import Inquiry from '../models/Inquiry.js';
 import { requireAdmin } from '../middleware/adminAuth.js';
-import { optionalUser } from '../middleware/userAuth.js';
-import User from '../models/User.js';
 
 const router = Router();
+const INQUIRY_STATUSES = ["new", "contacted", "closed"];
 
 // POST /api/inquiries — create a new inquiry
-router.post("/", optionalUser, async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const {
       name,
@@ -40,7 +39,6 @@ router.post("/", optionalUser, async (req, res) => {
       phone,
       machineInterest: inquiryInterest,
       message,
-      assignedUser: req.user?._id || null,
     });
 
     res.status(201).json({
@@ -53,11 +51,11 @@ router.post("/", optionalUser, async (req, res) => {
   }
 });
 
-// GET /api/inquiries — list inquiries (for an admin view, if you build one later)
-router.get("/", requireAdmin, async (req, res) => {
+// GET /api/inquiries — list inquiries for the Admin dashboard
+router.get("/", requireAdmin, async (_req, res) => {
   try {
     const inquiries = await Inquiry.find()
-      .populate("assignedUser", "_id name email userId")
+      .select("-assignedUser")
       .sort({ createdAt: -1 });
     res.json(inquiries);
   } catch (err) {
@@ -66,26 +64,17 @@ router.get("/", requireAdmin, async (req, res) => {
   }
 });
 
-router.patch("/:id/assign", requireAdmin, async (req, res, next) => {
+router.patch("/:id/status", requireAdmin, async (req, res, next) => {
+  const { status } = req.body || {};
+  if (!INQUIRY_STATUSES.includes(status)) {
+    return res.status(400).json({ message: "Choose a valid inquiry status." });
+  }
   try {
-    const assignedUserId = req.body?.assignedUserId || null;
-    if (assignedUserId !== null) {
-      if (typeof assignedUserId !== "string" || !/^[0-9a-fA-F]{24}$/.test(assignedUserId)) {
-        return res.status(400).json({ message: "Choose a valid user." });
-      }
-      const user = await User.findOne({
-        _id: assignedUserId,
-        status: "active",
-        deletedAt: null,
-      }).select("_id");
-      if (!user) return res.status(404).json({ message: "Active user not found." });
-    }
-
     const inquiry = await Inquiry.findByIdAndUpdate(
       req.params.id,
-      { assignedUser: assignedUserId },
+      { status },
       { new: true, runValidators: true }
-    ).populate("assignedUser", "_id name email userId");
+    );
     if (!inquiry) return res.status(404).json({ message: "Inquiry not found." });
     return res.json({ inquiry });
   } catch (error) {

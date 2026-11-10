@@ -43,18 +43,32 @@ const quotationItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const quotationCreatorSchema = new mongoose.Schema(
+  {
+    type: { type: String, enum: ["admin", "user"], required: true },
+    databaseId: { type: mongoose.Schema.Types.ObjectId, required: true },
+    name: {
+      type: String,
+      trim: true,
+      maxlength: 120,
+      required: function requireUserCreatorName() { return this.type === "user"; },
+    },
+    userId: {
+      type: String,
+      trim: true,
+      maxlength: 40,
+      required: function requireUserCreatorId() { return this.type === "user"; },
+    },
+  },
+  { _id: false }
+);
+
 const quoteRequestSchema = new mongoose.Schema(
   {
     quoteType: { type: String, enum: ["sparePart", "machine"], required: true },
     company: { type: String, required: true, trim: true, maxlength: 200 },
     contactName: { type: String, required: true, trim: true, maxlength: 160 },
     email: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
-    assignedUser: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-      index: true,
-    },
     phone: { type: String, required: true, trim: true, maxlength: 30 },
     city: { type: String, required: true, trim: true, maxlength: 120 },
     state: { type: String, required: true, trim: true, maxlength: 120 },
@@ -79,6 +93,7 @@ const quoteRequestSchema = new mongoose.Schema(
     quotation: {
       number: { type: String, trim: true, maxlength: 120, default: "" },
       sentAt: { type: Date, default: null },
+      createdBy: { type: quotationCreatorSchema, default: null },
       items: { type: [quotationItemSchema], default: [] },
       subtotalCents: { type: Number, min: 0, default: null },
       gstCents: { type: Number, min: 0, default: null },

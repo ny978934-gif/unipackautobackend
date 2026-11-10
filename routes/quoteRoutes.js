@@ -3,11 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import mongoose from "mongoose";
 import QuoteRequest from "../models/QuoteRequest.js";
-import User from "../models/User.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
-import { optionalUser } from "../middleware/userAuth.js";
 import cloudinary, { isConfigured } from "../config/cloudinary.js";
 import { uploadsDirectory } from "../config/uploads.js";
 import {
@@ -181,7 +178,7 @@ const storeAttachment = async (req, file) => {
   };
 };
 
-router.post("/", optionalUser, parseAttachment, async (req, res) => {
+router.post("/", parseAttachment, async (req, res) => {
   let quote;
   try {
     quote = validateQuote(req.body);
@@ -191,7 +188,6 @@ router.post("/", optionalUser, parseAttachment, async (req, res) => {
 
   try {
     if (req.file) quote.attachment = await storeAttachment(req, req.file);
-    if (req.user) quote.assignedUser = req.user._id;
     const savedQuote = await QuoteRequest.create(quote);
     let notificationSent = false;
     try {
@@ -226,42 +222,13 @@ router.post("/", optionalUser, parseAttachment, async (req, res) => {
 router.get("/", requireAdmin, async (_req, res) => {
   try {
     const requests = await QuoteRequest.find()
-      .select("-customerAccessTokenHash")
-      .populate("assignedUser", "_id name email userId")
+      .select("-customerAccessTokenHash -assignedUser")
       .sort({ createdAt: -1 })
       .lean();
     return res.json(requests);
   } catch (error) {
     console.error("Error fetching quote requests:", error);
     return res.status(500).json({ message: "Could not fetch quote requests." });
-  }
-});
-
-router.patch("/:id/assign", requireAdmin, async (req, res, next) => {
-  try {
-    const assignedUserId = req.body?.assignedUserId || null;
-    if (assignedUserId !== null) {
-      if (typeof assignedUserId !== "string" || !/^[0-9a-fA-F]{24}$/.test(assignedUserId)) {
-        return res.status(400).json({ message: "Choose a valid user." });
-      }
-      const user = await User.findOne({
-        _id: assignedUserId,
-        status: "active",
-        deletedAt: null,
-      }).select("_id");
-      if (!user) return res.status(404).json({ message: "Active user not found." });
-    }
-
-    const request = await QuoteRequest.findByIdAndUpdate(
-      req.params.id,
-      { assignedUser: assignedUserId },
-      { new: true, runValidators: true }
-    ).populate("assignedUser", "_id name email userId");
-    if (!request) return res.status(404).json({ message: "Quote request not found." });
-    return res.json({ request });
-  } catch (error) {
-    if (error.name === "CastError") return res.status(404).json({ message: "Quote request not found." });
-    return next(error);
   }
 });
 
@@ -320,6 +287,11 @@ router.patch("/:id/quotation", requireAdmin, async (req, res) => {
     const totals = await getQuotationTotals(quote, discountPercentages);
     const delivery = await sendFinalizedQuotation(quote, totals, {
       issuedAt: new Date(),
+      creator: {
+        type: "admin",
+        databaseId: req.admin._id,
+        name: "Admin",
+      },
     });
     return res.json({
       message: delivery.notificationSent
